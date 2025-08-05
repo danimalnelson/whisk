@@ -9,7 +9,6 @@ struct RecipeInputView: View {
     init(dataManager: DataManager, targetList: GroceryList? = nil) {
         self.dataManager = dataManager
         self.targetList = targetList
-        print("📱 RecipeInputView initialized with targetList: \(targetList?.name ?? "nil")")
     }
     
     @State private var recipeURLs: [String] = []
@@ -124,17 +123,29 @@ struct RecipeInputView: View {
     private func parseRecipes() {
         guard !recipeURLs.isEmpty else { return }
         
+        // Start timing the entire parsing process
+        let startTime = CFAbsoluteTimeGetCurrent()
+        print("⏱️ Starting recipe parsing timer...")
+        
         isParsing = true
         parsingResults.removeAll()
         
         Task {
             var successCount = 0
             let totalCount = recipeURLs.count
+            var individualTimings: [Double] = []
             
             for (index, url) in recipeURLs.enumerated() {
+                let recipeStartTime = CFAbsoluteTimeGetCurrent()
+                print("📋 Processing recipe \(index + 1)/\(totalCount): \(url)")
+                
                 do {
-                    print("📋 Processing recipe \(index + 1)/\(totalCount): \(url)")
                     let result = try await llmService.parseRecipe(from: url)
+                    let recipeEndTime = CFAbsoluteTimeGetCurrent()
+                    let recipeDuration = recipeEndTime - recipeStartTime
+                    individualTimings.append(recipeDuration)
+                    
+                    print("⏱️ Recipe \(index + 1) completed in \(String(format: "%.2f", recipeDuration)) seconds")
                     
                     await MainActor.run {
                         parsingResults.append(result)
@@ -152,6 +163,12 @@ struct RecipeInputView: View {
                         }
                     }
                 } catch {
+                    let recipeEndTime = CFAbsoluteTimeGetCurrent()
+                    let recipeDuration = recipeEndTime - recipeStartTime
+                    individualTimings.append(recipeDuration)
+                    
+                    print("⏱️ Recipe \(index + 1) failed after \(String(format: "%.2f", recipeDuration)) seconds")
+                    
                     await MainActor.run {
                         let errorResult = RecipeParsingResult(recipe: Recipe(url: url), success: false, error: error.localizedDescription)
                         parsingResults.append(errorResult)
@@ -161,6 +178,37 @@ struct RecipeInputView: View {
             }
             
             await MainActor.run {
+                let totalEndTime = CFAbsoluteTimeGetCurrent()
+                let totalDuration = totalEndTime - startTime
+                
+                // Log comprehensive timing statistics
+                print("⏱️ === PARSING TIMING SUMMARY ===")
+                print("⏱️ Total parsing time: \(String(format: "%.2f", totalDuration)) seconds")
+                print("⏱️ Number of recipes processed: \(totalCount)")
+                print("⏱️ Successful recipes: \(successCount)")
+                print("⏱️ Failed recipes: \(totalCount - successCount)")
+                
+                if !individualTimings.isEmpty {
+                    let averageTime = individualTimings.reduce(0, +) / Double(individualTimings.count)
+                    let minTime = individualTimings.min() ?? 0
+                    let maxTime = individualTimings.max() ?? 0
+                    
+                    print("⏱️ Average time per recipe: \(String(format: "%.2f", averageTime)) seconds")
+                    print("⏱️ Fastest recipe: \(String(format: "%.2f", minTime)) seconds")
+                    print("⏱️ Slowest recipe: \(String(format: "%.2f", maxTime)) seconds")
+                }
+                
+                // Log success/failure summary
+                if successCount == totalCount {
+                    print("✅ All recipes parsed successfully!")
+                } else if successCount > 0 {
+                    print("⚠️ \(successCount)/\(totalCount) recipes parsed successfully")
+                } else {
+                    print("❌ All recipes failed to parse")
+                }
+                
+                print("⏱️ === END TIMING SUMMARY ===")
+                
                 isParsing = false
                 
                 // Show summary
@@ -179,13 +227,6 @@ struct RecipeInputView: View {
     
     private func addIngredientsToGroceryList(_ ingredients: [Ingredient]) {
         let targetGroceryList = targetList ?? dataManager.currentList
-        
-        print("📋 Processing parsing results...")
-        print("📋 Recipe name: \(ingredients.first?.name ?? "Unknown")")
-        print("📋 Recipe ingredients count: \(ingredients.count)")
-        print("📋 Total ingredients to add: \(ingredients.count)")
-        print("📋 Target list: \(targetGroceryList?.name ?? "Unknown")")
-        print("📋 Adding ingredients to target list: \(targetGroceryList?.name ?? "Unknown")")
         
         if let targetList = targetGroceryList {
             dataManager.addIngredientsToList(ingredients, list: targetList)

@@ -15,33 +15,20 @@ class DataManager: ObservableObject {
     // MARK: - Grocery Lists Management
     
     func createNewList(name: String) -> GroceryList {
-        print("📝 Creating new list: \(name)")
         let newList = GroceryList(name: name)
-        print("📝 New list ID: \(newList.id)")
         groceryLists.append(newList)
-        print("📝 Added to groceryLists. Total lists: \(groceryLists.count)")
         currentList = newList
-        print("📝 Set as current list. Current list ID: \(currentList?.id ?? UUID())")
         saveData()
-        print("📝 Saved data")
         return newList
     }
     
     func updateCurrentList(_ list: GroceryList) {
-        print("🔄 Updating current list: \(list.name) (ID: \(list.id))")
-        print("🔄 Current list before update: \(currentList?.name ?? "nil") (ID: \(currentList?.id ?? UUID()))")
-        print("🔄 Total lists: \(groceryLists.count)")
-        
         if let index = groceryLists.firstIndex(where: { $0.id == list.id }) {
-            print("🔄 Found list at index: \(index)")
             groceryLists[index] = list
             currentList = list
-            print("🔄 Updated current list to: \(currentList?.name ?? "nil") (ID: \(currentList?.id ?? UUID()))")
-            print("🔄 Current list ingredients after update: \(currentList?.ingredients.count ?? 0)")
             saveData()
         } else {
             print("❌ Could not find list with ID: \(list.id)")
-            print("❌ Available list IDs: \(groceryLists.map { $0.id })")
         }
     }
     
@@ -56,13 +43,8 @@ class DataManager: ObservableObject {
     // MARK: - Ingredients Management
     
     func addIngredientsToCurrentList(_ ingredients: [Ingredient]) {
-        print("🛒 Adding \(ingredients.count) ingredients to current list")
-        print("🛒 Current list before: \(currentList?.name ?? "nil")")
-        print("🛒 Current list ingredients count: \(currentList?.ingredients.count ?? 0)")
-        
         // Create a default list if none exists
         if currentList == nil {
-            print("🛒 Creating new default list")
             createNewList(name: "Shopping List")
         }
         
@@ -71,30 +53,20 @@ class DataManager: ObservableObject {
             return 
         }
         
-        print("🛒 Using list: \(list.name)")
-        
         // Merge ingredients with existing ones
         for newIngredient in ingredients {
-            print("🛒 Processing ingredient: \(newIngredient.name) - \(newIngredient.amount) \(newIngredient.unit)")
-            
             if let existingIndex = list.ingredients.firstIndex(where: { 
                 $0.name.lowercased() == newIngredient.name.lowercased() && 
                 $0.category == newIngredient.category 
             }) {
                 // Combine amounts if same ingredient
                 list.ingredients[existingIndex].amount += newIngredient.amount
-                print("🛒 Combined with existing ingredient")
             } else {
                 list.ingredients.append(newIngredient)
-                print("🛒 Added new ingredient")
             }
         }
         
-        print("🛒 Final ingredients count: \(list.ingredients.count)")
-        print("🛒 List name: \(list.name)")
-        print("🛒 List ID: \(list.id)")
         updateCurrentList(list)
-        print("🛒 After update - current list ingredients: \(currentList?.ingredients.count ?? 0)")
     }
     
     func addIngredientsToList(_ ingredients: [Ingredient], list: GroceryList) {

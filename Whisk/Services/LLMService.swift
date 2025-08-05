@@ -9,7 +9,7 @@ class LLMService: ObservableObject {
         self.apiKey = apiKey
         if useOpenAI {
             self.baseURL = "https://api.openai.com/v1/chat/completions"
-            self.model = "gpt-4o-mini" // Cheaper option
+            self.model = "gpt-3.5-turbo-instruct" // Faster option
         } else {
             self.baseURL = "https://api.anthropic.com/v1/messages"
             self.model = "claude-3-haiku-20240307" // Cheaper option
@@ -17,31 +17,25 @@ class LLMService: ObservableObject {
     }
     
     func parseRecipe(from url: String) async throws -> RecipeParsingResult {
-        print("Starting recipe parsing for URL: \(url)")
+        print("🔍 Starting recipe parsing for URL: \(url)")
         
         // First, fetch the webpage content
         let webpageContent = try await fetchWebpageContent(from: url)
-        print("Fetched webpage content length: \(webpageContent.count)")
         
         // Extract just the ingredient section
         let ingredientSection = extractIngredientSection(from: webpageContent)
-        print("Extracted ingredient section length: \(ingredientSection.count)")
         
         // Create the prompt for the LLM using only the ingredient section
         let prompt = createRecipeParsingPrompt(ingredientContent: ingredientSection)
-        print("Created prompt length: \(prompt.count)")
         
         // Call the LLM
         let response = try await callLLM(prompt: prompt)
-        print("Received LLM response length: \(response.count)")
         
         // Parse the LLM response
         return parseLLMResponse(response, originalURL: url, originalContent: webpageContent)
     }
     
     private func fetchWebpageContent(from url: String) async throws -> String {
-        print("🔗 Fetching webpage from: \(url)")
-        
         guard let url = URL(string: url) else {
             print("❌ Invalid URL: \(url)")
             throw LLMServiceError.invalidURL
@@ -54,12 +48,8 @@ class LLMService: ObservableObject {
             throw LLMServiceError.invalidResponse
         }
         
-        print("📡 HTTP Status: \(httpResponse.statusCode)")
-        
         if httpResponse.statusCode != 200 {
             print("❌ HTTP Error: \(httpResponse.statusCode)")
-            let errorString = String(data: data, encoding: .utf8) ?? "Unknown error"
-            print("❌ Error content: \(errorString)")
             throw LLMServiceError.invalidResponse
         }
         
@@ -68,22 +58,52 @@ class LLMService: ObservableObject {
             throw LLMServiceError.invalidResponse
         }
         
-        print("📄 Raw HTML length: \(htmlString.count)")
+        // ULTRA-AGGRESSIVE: Extract only ingredient lines
+        var textContent = ""
         
-        // Enhanced approach: Extract text while preserving ingredient information
-        var textContent = htmlString
-            .replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression) // Replace tags with spaces instead of removing
-            .replacingOccurrences(of: "&nbsp;", with: " ")
-            .replacingOccurrences(of: "&amp;", with: "&")
-            .replacingOccurrences(of: "&lt;", with: "<")
-            .replacingOccurrences(of: "&gt;", with: ">")
-            .replacingOccurrences(of: "&quot;", with: "\"")
-            .replacingOccurrences(of: "&#39;", with: "'")
-            .replacingOccurrences(of: "&rsquo;", with: "'")
-            .replacingOccurrences(of: "&lsquo;", with: "'")
-            .replacingOccurrences(of: "&mdash;", with: "—")
-            .replacingOccurrences(of: "&ndash;", with: "–")
-            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression) // Normalize whitespace
+        // Extract only lines that contain measurements
+        let lines = htmlString.components(separatedBy: .newlines)
+        var ingredientLines: [String] = []
+        
+        for line in lines {
+            let cleanLine = line
+                .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+                .replacingOccurrences(of: "&nbsp;", with: " ")
+                .replacingOccurrences(of: "&amp;", with: "&")
+                .replacingOccurrences(of: "&lt;", with: "<")
+                .replacingOccurrences(of: "&gt;", with: ">")
+                .replacingOccurrences(of: "&quot;", with: "\"")
+                .replacingOccurrences(of: "&#39;", with: "'")
+                .replacingOccurrences(of: "&rsquo;", with: "'")
+                .replacingOccurrences(of: "&lsquo;", with: "'")
+                .replacingOccurrences(of: "&mdash;", with: "—")
+                .replacingOccurrences(of: "&ndash;", with: "–")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            
+            if !cleanLine.isEmpty {
+                let lowercasedLine = cleanLine.lowercased()
+                // Only keep lines with measurements
+                if lowercasedLine.contains("cup") || lowercasedLine.contains("tablespoon") || 
+                   lowercasedLine.contains("teaspoon") || lowercasedLine.contains("ounce") || 
+                   lowercasedLine.contains("pound") || lowercasedLine.contains("gram") ||
+                   lowercasedLine.contains("clove") || lowercasedLine.contains("medium") ||
+                   lowercasedLine.contains("small") || lowercasedLine.contains("large") ||
+                   lowercasedLine.contains("ml") || lowercasedLine.contains("g ") ||
+                   lowercasedLine.contains("kg") || lowercasedLine.contains("l ") ||
+                   lowercasedLine.contains("tbsp") || lowercasedLine.contains("tsp") {
+                    ingredientLines.append(cleanLine)
+                }
+            }
+        }
+        
+        textContent = ingredientLines.joined(separator: "\n")
+        print("📋 Filtered to \(ingredientLines.count) ingredient lines")
+        
+        // HARD LIMIT: Truncate to 1000 characters max
+        if textContent.count > 1000 {
+            textContent = String(textContent.prefix(1000))
+            textContent += "\n\n[Content truncated...]"
+        }
         
         // First, try to extract ingredients from HTML list elements
         let listPatterns = [
@@ -197,78 +217,8 @@ class LLMService: ObservableObject {
     
     private func createRecipeParsingPrompt(ingredientContent: String) -> String {
         return """
-        CRITICAL: Extract ALL ingredients listed in the recipe with 100% accuracy. CLEAN and STANDARDIZE ingredient names for shopping.
-        
-        You must find and extract EVERY SINGLE ingredient as they appear in the recipe, including:
-        - ALL ingredient names with exact measurements
-        - ALL amounts and units specified
-        - ALL ingredients mentioned in the ingredient list
-        - Do NOT skip any ingredients, even if they seem minor
-        
-        Look for:
-        - Complete ingredient lists with measurements
-        - Bullet points or numbered lists of ingredients
-        - ALL ingredients with exact amounts and units
-        - Specific ingredient names and descriptions
-        - EVERY ingredient mentioned in the recipe
-        
-        CRITICAL REQUIREMENTS:
-        1. Extract ALL ingredients that are explicitly listed in the recipe
-        2. Do NOT skip any ingredients - extract EVERY SINGLE ONE
-        3. Use the EXACT measurements provided (e.g., "1 1/2 tablespoons" not "2 tablespoons")
-        4. STANDARDIZE units and measurements for consistency:
-           - "oz" → "ounces"
-           - "lb" → "pounds" 
-           - "tbsp" → "tablespoons"
-           - "tsp" → "teaspoons"
-           - "g" → "grams"
-           - "kg" → "kilograms"
-           - "ml" → "milliliters"
-           - "l" → "liters"
-           - "c" → "cups"
-           - "pt" → "pints"
-           - "qt" → "quarts"
-           - "gal" → "gallons"
-        5. Do NOT substitute similar ingredients
-        6. Do NOT add ingredients that aren't in the recipe
-        7. Do NOT skip any ingredients - extract ALL of them
-        8. CLEAN ingredient names for shopping - REMOVE preparation instructions and unnecessary adjectives:
-            - Remove preparation methods: "halved", "diced", "chopped", "finely chopped", "coarsely chopped", "thinly sliced", "minced", "grated", "shredded", "torn into small pieces", "cut into strips", "julienned", "zested", "torn", "cubed", "mashed", "pureed", "whipped", "beaten", "crushed", "ground"
-            - Remove cooking states: "crispy", "toasted", "roasted", "grilled", "fried", "sautéed", "baked", "broiled", "steamed", "poached", "seared", "caramelized", "blanched", "boiled", "pickled", "smoked", "marinated", "candied", "melted", "softened", "thawed", "defrosted"
-            - Remove processing: "peeled", "deveined", "tail-on", "pitted", "seeded", "cored", "trimmed", "stemmed", "skinned", "deboned", "boneless", "skinless", "filleted", "rinsed", "washed", "patted dry", "squeezed", "pressed", "drained"
-            - Remove state descriptors: "fresh", "raw", "uncooked", "cold", "warm", "hot", "divided", "separated", "reserved"
-            - Remove size descriptors: "large", "medium", "small" (unless it's part of the ingredient name like "large eggs")
-            - Keep only the core ingredient name that people would use when shopping
-        9. Examples of cleaning:
-            - "2 cups grape tomatoes, halved" → "grape tomatoes"
-            - "1 large shallot, finely chopped" → "shallot"
-            - "1 pound fresh mozzarella cheese, torn into small bite-size pieces" → "mozzarella cheese"
-            - "6 large garlic cloves, divided" → "garlic cloves"
-            - "1 pound medium (36-40 count) peeled, deveined raw shrimp, tail-on" → "shrimp"
-            - "4 tablespoons cold unsalted butter" → "unsalted butter"
-            - "12 ounces uncooked thin spaghetti" → "thin spaghetti"
-            - "2 tablespoons chopped fresh cilantro" → "cilantro"
-        
-        VERIFICATION: After extracting, count the ingredients in your response and ensure you have extracted ALL ingredients from the recipe. If you find fewer than 15 ingredients for a typical recipe, you are likely missing some.
-        
-        Ignore CSS, JavaScript, HTML tags, and web development content.
-        
-        Use ONLY these categories: Produce, Meat & Seafood, Deli, Bakery, Frozen, Pantry, Dairy, Beverages
-        
-        Return JSON format:
-        {
-            "recipeName": "Recipe Name",
-            "ingredients": [
-                {
-                    "name": "Exact Ingredient Name", 
-                    "amount": 2.0,
-                    "unit": "exact unit",
-                    "category": "Produce"
-                }
-            ]
-        }
-        
-        Content:
+        Extract ingredients. JSON: {"recipeName": "name", "ingredients": [{"name": "ingredient", "amount": 1, "unit": "unit", "category": "category"}]}
+        Categories: Produce, Meat & Seafood, Deli, Bakery, Frozen, Pantry, Dairy, Beverages
         \(ingredientContent)
         """
     }
@@ -293,11 +243,9 @@ class LLMService: ObservableObject {
             throw LLMServiceError.invalidResponse
         }
         
-        print("🤖 Vercel API Status: \(httpResponse.statusCode)")
-        
         if httpResponse.statusCode != 200 {
             let errorString = String(data: data, encoding: .utf8) ?? "Unknown error"
-            print("🤖 Vercel API Error: \(errorString)")
+            print("❌ Vercel API Error: \(errorString)")
             throw LLMServiceError.apiError
         }
         
@@ -308,9 +256,6 @@ class LLMService: ObservableObject {
             throw LLMServiceError.parsingError
         }
         
-        print("🤖 LLM Response length: \(content.count)")
-        print("🤖 LLM Response (first 200 chars): \(String(content.prefix(200)))")
-        print("🤖 LLM Response (last 200 chars): \(String(content.suffix(200)))")
         return content
     }
     
@@ -335,30 +280,21 @@ class LLMService: ObservableObject {
         
         do {
             // The response is already the raw LLM content (extracted from Vercel API response)
-            print("Using response directly as content")
             
             // Clean up the JSON string
             var cleanedJsonString = response
             
             // Remove markdown code blocks if present
-            print("🔍 Checking for markdown blocks in response (first 100 chars): \(String(cleanedJsonString.prefix(100)))")
-            
             if cleanedJsonString.contains("```json") {
-                print("🔍 Found ```json blocks")
                 if let startRange = cleanedJsonString.range(of: "```json"),
                    let endRange = cleanedJsonString.range(of: "```", range: startRange.upperBound..<cleanedJsonString.endIndex) {
                     cleanedJsonString = String(cleanedJsonString[startRange.upperBound..<endRange.lowerBound])
-                    print("✅ Extracted from ```json blocks")
                 }
             } else if cleanedJsonString.contains("```") {
-                print("🔍 Found ``` blocks")
                 if let startRange = cleanedJsonString.range(of: "```"),
                    let endRange = cleanedJsonString.range(of: "```", range: startRange.upperBound..<cleanedJsonString.endIndex) {
                     cleanedJsonString = String(cleanedJsonString[startRange.upperBound..<endRange.lowerBound])
-                    print("✅ Extracted from ``` blocks")
                 }
-            } else {
-                print("🔍 No markdown blocks found")
             }
             
             // Additional cleanup for any remaining markdown artifacts
@@ -370,8 +306,6 @@ class LLMService: ObservableObject {
                     cleanedJsonString = String(cleanedJsonString[jsonStart.lowerBound...])
                 }
             }
-            
-            print("After markdown extraction (first 50 chars): \(String(cleanedJsonString.prefix(50)))")
             
             // Trim whitespace and newlines
             cleanedJsonString = cleanedJsonString.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -492,11 +426,13 @@ class LLMService: ObservableObject {
                     }
                     
                     let verification = verifyIngredientsAgainstContent(parsedIngredients, originalContent: originalContent)
-                    print("Verification score: \(verification.verificationScore)%")
-                    print("Verified ingredients: \(verification.verifiedIngredients.count)/\(parsedIngredients.count)")
                     
-                    for note in verification.notes {
-                        print(note)
+                    // Only log verification details if there are issues
+                    if verification.verificationScore < 80 {
+                        print("⚠️ Verification score: \(verification.verificationScore)% (\(verification.verifiedIngredients.count)/\(parsedIngredients.count) ingredients verified)")
+                        for note in verification.notes {
+                            print("   \(note)")
+                        }
                     }
                     
                     // If confidence is too low, return error
@@ -838,7 +774,6 @@ class LLMService: ObservableObject {
         ]
         
         let standardizedUnit = unitMappings[lowercasedUnit] ?? lowercasedUnit
-        print("🔄 Standardized unit: '\(unit)' → '\(standardizedUnit)'")
         return standardizedUnit
     }
     
@@ -863,11 +798,8 @@ class LLMService: ObservableObject {
     }
     
     private func extractIngredientSection(from content: String) -> String {
-        print("🔍 Starting ingredient extraction from content length: \(content.count)")
-        
         // Simple approach: Let the LLM handle the filtering
         // Just return the content and let the LLM figure out what's food vs code
-        print("✅ Using simple approach - letting LLM handle filtering")
         return content
     }
     
