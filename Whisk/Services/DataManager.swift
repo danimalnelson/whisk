@@ -4,12 +4,9 @@ import SwiftUI
 class DataManager: ObservableObject {
     @Published var groceryLists: [GroceryList] = []
     @Published var currentList: GroceryList?
-    @Published var useMetricSystem: Bool = true
-    
     private let userDefaults = UserDefaults.standard
     private let groceryListsKey = "groceryLists"
     private let currentListKey = "currentList"
-    private let useMetricSystemKey = "useMetricSystem"
     
     init() {
         loadData()
@@ -167,13 +164,6 @@ class DataManager: ObservableObject {
         updateCurrentList(list)
     }
     
-    // MARK: - Settings
-    
-    func toggleMetricSystem() {
-        useMetricSystem.toggle()
-        userDefaults.set(useMetricSystem, forKey: useMetricSystemKey)
-    }
-    
     // MARK: - Data Persistence
     
     private func saveData() {
@@ -264,8 +254,6 @@ class DataManager: ObservableObject {
             }
         }
         
-        // Load settings
-        useMetricSystem = userDefaults.bool(forKey: useMetricSystemKey)
         print("📱 Data loading complete. Current list: \(currentList?.name ?? "nil") with \(currentList?.ingredients.count ?? 0) ingredients")
     }
 } 

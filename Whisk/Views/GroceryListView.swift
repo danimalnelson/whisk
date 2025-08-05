@@ -3,7 +3,6 @@ import SwiftUI
 struct GroceryListView: View {
     @ObservedObject var dataManager: DataManager
     @State private var showingCreateList = false
-    @State private var showingSettings = false
     @State private var newListName = ""
     
     var body: some View {
@@ -62,13 +61,6 @@ struct GroceryListView: View {
             .navigationTitle("Grocery Lists")
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button(action: { showingSettings = true }) {
-                        Image(systemName: "gear")
-                            .foregroundColor(.blue)
-                    }
-                }
-                
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: { showingCreateList = true }) {
                         Image(systemName: "plus")
@@ -78,9 +70,6 @@ struct GroceryListView: View {
             }
             .sheet(isPresented: $showingCreateList) {
                 CreateListView(dataManager: dataManager, isPresented: $showingCreateList)
-            }
-            .sheet(isPresented: $showingSettings) {
-                SettingsView(dataManager: dataManager)
             }
         }
     }
