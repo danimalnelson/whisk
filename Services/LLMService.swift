@@ -273,37 +273,47 @@ class LLMService: ObservableObject {
         """
     }
     
+
+    
     private func callLLM(prompt: String) async throws -> String {
-        guard let url = URL(string: baseURL) else {
+        print("🤖 Calling Vercel API for OpenAI...")
+        
+        guard let url = URL(string: "https://whisk-server-97zqsyqbp-dannelson.vercel.app/api/call-openai") else {
             throw LLMServiceError.invalidURL
         }
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         
-        let requestBody = createRequestBody(prompt: prompt)
+        let requestBody = ["prompt": prompt]
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
         
         let (data, response) = try await URLSession.shared.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse else {
-            throw LLMServiceError.apiError
+            throw LLMServiceError.invalidResponse
         }
         
-        print("API Response Status: \(httpResponse.statusCode)")
+        print("🤖 Vercel API Status: \(httpResponse.statusCode)")
         
         if httpResponse.statusCode != 200 {
             let errorString = String(data: data, encoding: .utf8) ?? "Unknown error"
-            print("API Error: \(errorString)")
+            print("🤖 Vercel API Error: \(errorString)")
             throw LLMServiceError.apiError
         }
         
-        let responseString = String(data: data, encoding: .utf8) ?? ""
-        print("API Response: \(responseString)")
+        guard let jsonResponse = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let success = jsonResponse["success"] as? Bool,
+              success,
+              let content = jsonResponse["content"] as? String else {
+            throw LLMServiceError.parsingError
+        }
         
-        return responseString
+        print("🤖 LLM Response length: \(content.count)")
+        print("🤖 LLM Response (first 200 chars): \(String(content.prefix(200)))")
+        print("🤖 LLM Response (last 200 chars): \(String(content.suffix(200)))")
+        return content
     }
     
     private func createRequestBody(prompt: String) -> [String: Any] {
@@ -326,47 +336,40 @@ class LLMService: ObservableObject {
         var recipe = Recipe(url: originalURL)
         
         do {
-            // First, try to parse the full API response to extract the content
-            if let data = response.data(using: .utf8) {
-                let apiResponse = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-                
-                // Extract the content from the API response
-                var contentString: String?
-                if let choices = apiResponse?["choices"] as? [[String: Any]],
-                   let firstChoice = choices.first,
-                   let message = firstChoice["message"] as? [String: Any],
-                   let content = message["content"] as? String {
-                    contentString = content
-                    print("Extracted content from API response")
-                }
-                
-                // If we couldn't extract content from API response, try to parse the response directly
-                if contentString == nil {
-                    contentString = response
-                    print("Using response directly as content")
-                }
-                
-                guard let jsonString = contentString else {
-                    print("No content found in response")
-                    return RecipeParsingResult(recipe: recipe, success: false, error: "No content found in response")
-                }
+            // The response is already the raw LLM content (extracted from Vercel API response)
+            print("Using response directly as content")
                 
                 // Clean up the JSON string
-                var cleanedJsonString = jsonString
+                var cleanedJsonString = response
                 
                 // Remove markdown code blocks if present
+                print("🔍 Checking for markdown blocks in response (first 100 chars): \(String(cleanedJsonString.prefix(100)))")
+                
                 if cleanedJsonString.contains("```json") {
+                    print("🔍 Found ```json blocks")
                     if let startRange = cleanedJsonString.range(of: "```json"),
                        let endRange = cleanedJsonString.range(of: "```", range: startRange.upperBound..<cleanedJsonString.endIndex) {
                         cleanedJsonString = String(cleanedJsonString[startRange.upperBound..<endRange.lowerBound])
-                        print("Extracted from ```json blocks")
+                        print("✅ Extracted from ```json blocks")
                     }
                 } else if cleanedJsonString.contains("```") {
-                    // Handle ``` without json
+                    print("🔍 Found ``` blocks")
                     if let startRange = cleanedJsonString.range(of: "```"),
                        let endRange = cleanedJsonString.range(of: "```", range: startRange.upperBound..<cleanedJsonString.endIndex) {
                         cleanedJsonString = String(cleanedJsonString[startRange.upperBound..<endRange.lowerBound])
-                        print("Extracted from ``` blocks")
+                        print("✅ Extracted from ``` blocks")
+                    }
+                } else {
+                    print("🔍 No markdown blocks found")
+                }
+                
+                // Additional cleanup for any remaining markdown artifacts
+                cleanedJsonString = cleanedJsonString.trimmingCharacters(in: .whitespacesAndNewlines)
+                
+                // If the string still starts with "```", try to find the actual JSON start
+                if cleanedJsonString.hasPrefix("```") {
+                    if let jsonStart = cleanedJsonString.range(of: "{") {
+                        cleanedJsonString = String(cleanedJsonString[jsonStart.lowerBound...])
                     }
                 }
                 
@@ -2027,7 +2030,6 @@ class LLMService: ObservableObject {
         print("🔄 Converted fractions to decimals in JSON")
         return result
     }
-}
 
 enum LLMServiceError: Error {
     case invalidURL
