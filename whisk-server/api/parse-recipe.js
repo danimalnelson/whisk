@@ -28,13 +28,16 @@ async function parseRecipe(url) {
   const htmlContent = await fetchWebpageContent(url);
   console.log('Fetched webpage content length:', htmlContent.length);
   
-  // Extract recipe data from HTML
-  const recipeData = extractRecipeData(htmlContent);
-  console.log('Extracted ingredients count:', recipeData.ingredients.length);
-  console.log('Extracted recipe title:', recipeData.title || 'Not found');
+  // Extract ingredients from HTML
+  const extractedIngredients = extractIngredientsFromHTML(htmlContent);
+  console.log('Extracted ingredients count:', extractedIngredients.length);
+  
+  // Extract recipe title from HTML
+  const recipeTitle = extractRecipeTitle(htmlContent);
+  console.log('Extracted recipe title:', recipeTitle || 'Not found');
   
   // Create prompt for LLM
-  const prompt = createLLMPrompt(recipeData.ingredients, recipeData.title);
+  const prompt = createLLMPrompt(extractedIngredients, recipeTitle);
   console.log('Created prompt length:', prompt.length);
   
   // Call OpenAI API
@@ -81,7 +84,7 @@ async function fetchWebpageContent(url) {
   return textContent;
 }
 
-function extractRecipeData(htmlString) {
+function extractIngredientsFromHTML(htmlString) {
   const listPatterns = [
     /<ul[^>]*>(.*?)<\/ul>/gs,
     /<ol[^>]*>(.*?)<\/ol>/gs
@@ -137,46 +140,17 @@ function extractRecipeData(htmlString) {
     }
   }
   
-  // Extract recipe title from various sources
-  let recipeTitle = null;
-  
+  return extractedIngredients;
+}
+
+function extractRecipeTitle(htmlString) {
   // Try to extract from title tag
   const titleMatch = htmlString.match(/<title[^>]*>(.*?)<\/title>/i);
   if (titleMatch) {
-    recipeTitle = titleMatch[1].trim();
+    let recipeTitle = titleMatch[1].trim();
     console.log('📝 Found recipe title from <title>:', recipeTitle);
-  }
-  
-  // Try to extract from h1 tags
-  if (!recipeTitle) {
-    const h1Match = htmlString.match(/<h1[^>]*>(.*?)<\/h1>/i);
-    if (h1Match) {
-      recipeTitle = h1Match[1].trim();
-      console.log('📝 Found recipe title from <h1>:', recipeTitle);
-    }
-  }
-  
-  // Try to extract from h2 tags
-  if (!recipeTitle) {
-    const h2Match = htmlString.match(/<h2[^>]*>(.*?)<\/h2>/i);
-    if (h2Match) {
-      recipeTitle = h2Match[1].trim();
-      console.log('📝 Found recipe title from <h2>:', recipeTitle);
-    }
-  }
-  
-  // Try to extract from meta tags
-  if (!recipeTitle) {
-    const metaMatch = htmlString.match(/<meta[^>]*property="og:title"[^>]*content="([^"]*)"[^>]*>/i);
-    if (metaMatch) {
-      recipeTitle = metaMatch[1].trim();
-      console.log('📝 Found recipe title from og:title meta:', recipeTitle);
-    }
-  }
-  
-  // Clean up the title if found
-  if (recipeTitle) {
-    // Remove common suffixes
+    
+    // Clean up the title
     recipeTitle = recipeTitle
       .replace(/\s*-\s*.*$/, '') // Remove everything after dash
       .replace(/\s*\|\s*.*$/, '') // Remove everything after pipe
@@ -185,12 +159,28 @@ function extractRecipeData(htmlString) {
       .trim();
     
     console.log('📝 Cleaned recipe title:', recipeTitle);
+    return recipeTitle;
   }
   
-  return {
-    ingredients: extractedIngredients,
-    title: recipeTitle
-  };
+  // Try to extract from h1 tags
+  const h1Match = htmlString.match(/<h1[^>]*>(.*?)<\/h1>/i);
+  if (h1Match) {
+    let recipeTitle = h1Match[1].trim();
+    console.log('📝 Found recipe title from <h1>:', recipeTitle);
+    
+    // Clean up the title
+    recipeTitle = recipeTitle
+      .replace(/\s*-\s*.*$/, '') // Remove everything after dash
+      .replace(/\s*\|\s*.*$/, '') // Remove everything after pipe
+      .replace(/\s*Recipe\s*$/i, '') // Remove "Recipe" suffix
+      .replace(/\s*Recipes?\s*$/i, '') // Remove "Recipes" suffix
+      .trim();
+    
+    console.log('📝 Cleaned recipe title:', recipeTitle);
+    return recipeTitle;
+  }
+  
+  return null;
 }
 
 function createLLMPrompt(ingredients, recipeTitle) {
