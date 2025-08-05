@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct RecipeInputView: View {
-    @StateObject private var llmService = LLMService(apiKey: "YOUR_API_KEY_HERE") // TODO: Get from secure storage
+    @StateObject private var llmService = LLMService(apiKey: "") // API key now managed on server
     @ObservedObject var dataManager: DataManager
     let targetList: GroceryList? // Optional: if nil, use current list
     @Environment(\.dismiss) private var dismiss
