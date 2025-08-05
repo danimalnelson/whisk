@@ -4,6 +4,7 @@ struct GroceryListView: View {
     @ObservedObject var dataManager: DataManager
     @State private var showingCreateList = false
     @State private var newListName = ""
+    @State private var navigateToNewList: GroceryList?
     
     var body: some View {
         NavigationView {
@@ -64,8 +65,23 @@ struct GroceryListView: View {
                 }
             }
             .sheet(isPresented: $showingCreateList) {
-                CreateListView(dataManager: dataManager, isPresented: $showingCreateList)
+                CreateListView(dataManager: dataManager, isPresented: $showingCreateList, onListCreated: { newList in
+                    navigateToNewList = newList
+                })
             }
+            .background(
+                NavigationLink(
+                    destination: navigateToNewList.map { list in
+                        GroceryListDetailView(dataManager: dataManager, list: list)
+                    },
+                    isActive: Binding(
+                        get: { navigateToNewList != nil },
+                        set: { if !$0 { navigateToNewList = nil } }
+                    )
+                ) {
+                    EmptyView()
+                }
+            )
         }
     }
     
@@ -79,6 +95,7 @@ struct GroceryListView: View {
 struct CreateListView: View {
     @ObservedObject var dataManager: DataManager
     @Binding var isPresented: Bool
+    let onListCreated: (GroceryList) -> Void
     @State private var listName = ""
     
     var body: some View {
@@ -94,7 +111,8 @@ struct CreateListView: View {
                 
                 Button("Create List") {
                     if !listName.isEmpty {
-                        dataManager.createNewList(name: listName)
+                        let newList = dataManager.createNewList(name: listName)
+                        onListCreated(newList)
                         isPresented = false
                     }
                 }
@@ -147,43 +165,34 @@ struct GroceryListDetailView: View {
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
                     
-                    Button("Add Recipes") {
-                        showingRecipeInput = true
-                    }
-                    .buttonStyle(.borderedProminent)
+
                 }
                 .padding()
             } else if let currentList = currentList {
                 // Grocery List Content
-                ScrollView {
-                    LazyVStack(spacing: 16) {
-                        ForEach(GroceryCategory.allCases, id: \.self) { category in
-                            if let ingredients = currentList.ingredientsByCategory[category],
-                               !ingredients.isEmpty {
-                                CategorySection(
-                                    category: category,
-                                    ingredients: ingredients,
-                                    dataManager: dataManager
-                                )
+                List {
+                    ForEach(GroceryCategory.allCases, id: \.self) { category in
+                        if let ingredients = currentList.ingredientsByCategory[category],
+                           !ingredients.isEmpty {
+                            Section(header: CategoryHeader(category: category, count: ingredients.count)) {
+                                ForEach(ingredients) { ingredient in
+                                    IngredientRow(
+                                        ingredient: ingredient,
+                                        dataManager: dataManager
+                                    )
+                                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                        Button(role: .destructive) {
+                                            dataManager.removeIngredient(ingredient)
+                                        } label: {
+                                            Label("Delete", systemImage: "trash")
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
-                    .padding()
                 }
-                
-                // Bottom Action Bar
-                Button(action: { showingRecipeInput = true }) {
-                    HStack {
-                        Image(systemName: "plus.circle.fill")
-                        Text("Add Recipes")
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(Color.blue)
-                    .foregroundColor(.white)
-                    .cornerRadius(10)
-                }
-                .padding()
+                .listStyle(PlainListStyle())
             } else {
                 // Fallback: Show empty state if currentList is nil
                 VStack(spacing: 20) {
@@ -210,46 +219,39 @@ struct GroceryListDetailView: View {
         }
         .navigationTitle(currentList?.name ?? list.name)
         .navigationBarTitleDisplayMode(.large)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button(action: { showingRecipeInput = true }) {
+                    Image(systemName: "plus")
+                        .foregroundColor(.blue)
+                }
+            }
+        }
         .sheet(isPresented: $showingRecipeInput) {
             RecipeInputView(dataManager: dataManager, targetList: currentList)
         }
     }
 }
 
-struct CategorySection: View {
+struct CategoryHeader: View {
     let category: GroceryCategory
-    let ingredients: [Ingredient]
-    let dataManager: DataManager
+    let count: Int
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Image(systemName: category.icon)
-                    .foregroundColor(.blue)
-                
-                Text(category.displayName)
-                    .font(.headline)
-                    .fontWeight(.semibold)
-                
-                Spacer()
-                
-                Text("\(ingredients.count) items")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
+        HStack {
+            Image(systemName: category.icon)
+                .foregroundColor(.blue)
             
-            LazyVStack(spacing: 4) {
-                ForEach(ingredients) { ingredient in
-                    IngredientRow(
-                        ingredient: ingredient,
-                        dataManager: dataManager
-                    )
-                }
-            }
+            Text(category.displayName)
+                .font(.headline)
+                .fontWeight(.semibold)
+            
+            Spacer()
+            
+            Text("\(count) items")
+                .font(.caption)
+                .foregroundColor(.secondary)
         }
-        .padding()
-        .background(Color(.systemGray6))
-        .cornerRadius(12)
     }
 }
 
@@ -280,15 +282,6 @@ struct IngredientRow: View {
             }
             
             Spacer()
-            
-            Button(action: {
-                dataManager.removeIngredient(ingredient)
-            }) {
-                Image(systemName: "trash")
-                    .foregroundColor(.red)
-                    .font(.caption)
-            }
-            .buttonStyle(PlainButtonStyle())
         }
         .padding(.vertical, 4)
     }

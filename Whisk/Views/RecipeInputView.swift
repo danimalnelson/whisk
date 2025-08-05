@@ -95,19 +95,6 @@ struct RecipeInputView: View {
                 }
                 .disabled(recipeURLs.isEmpty || isParsing)
                 .padding(.horizontal)
-                
-                // Progress indicator
-                if isParsing {
-                    VStack(spacing: 8) {
-                        Text("Parsing \(recipeURLs.count) recipe(s)...")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        
-                        ProgressView()
-                            .progressViewStyle(LinearProgressViewStyle())
-                            .padding(.horizontal)
-                    }
-                }
             }
             .navigationTitle("Add Recipes")
             .navigationBarTitleDisplayMode(.inline)

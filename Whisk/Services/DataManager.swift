@@ -14,7 +14,7 @@ class DataManager: ObservableObject {
     
     // MARK: - Grocery Lists Management
     
-    func createNewList(name: String) {
+    func createNewList(name: String) -> GroceryList {
         print("📝 Creating new list: \(name)")
         let newList = GroceryList(name: name)
         print("📝 New list ID: \(newList.id)")
@@ -24,6 +24,7 @@ class DataManager: ObservableObject {
         print("📝 Set as current list. Current list ID: \(currentList?.id ?? UUID())")
         saveData()
         print("📝 Saved data")
+        return newList
     }
     
     func updateCurrentList(_ list: GroceryList) {
