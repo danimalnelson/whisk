@@ -5,7 +5,7 @@ class LLMService: ObservableObject {
     private let baseURL: String
     private let model: String
     
-    init(apiKey: String, useOpenAI: Bool = true) {
+    init(apiKey: String = "", useOpenAI: Bool = true) {
         self.apiKey = apiKey
         if useOpenAI {
             self.baseURL = "https://api.openai.com/v1/chat/completions"
@@ -19,12 +19,24 @@ class LLMService: ObservableObject {
     func parseRecipe(from url: String) async throws -> RecipeParsingResult {
         print("Starting recipe parsing for URL: \(url)")
         
-        // Call our Vercel function with the recipe URL
-        let response = try await callVercelAPI(recipeURL: url)
-        print("Received Vercel API response length: \(response.count)")
+        // First, fetch the webpage content
+        let webpageContent = try await fetchWebpageContent(from: url)
+        print("Fetched webpage content length: \(webpageContent.count)")
         
-        // Parse the response
-        return parseLLMResponse(response, originalURL: url, originalContent: "")
+        // Extract just the ingredient section
+        let ingredientSection = extractIngredientSection(from: webpageContent)
+        print("Extracted ingredient section length: \(ingredientSection.count)")
+        
+        // Create the prompt for the LLM using only the ingredient section
+        let prompt = createRecipeParsingPrompt(ingredientContent: ingredientSection)
+        print("Created prompt length: \(prompt.count)")
+        
+        // Call the LLM
+        let response = try await callLLM(prompt: prompt)
+        print("Received LLM response length: \(response.count)")
+        
+        // Parse the LLM response
+        return parseLLMResponse(response, originalURL: url, originalContent: webpageContent)
     }
     
     private func fetchWebpageContent(from url: String) async throws -> String {
@@ -324,188 +336,187 @@ class LLMService: ObservableObject {
         do {
             // The response is already the raw LLM content (extracted from Vercel API response)
             print("Using response directly as content")
-                
-                // Clean up the JSON string
-                var cleanedJsonString = response
-                
-                // Remove markdown code blocks if present
-                print("🔍 Checking for markdown blocks in response (first 100 chars): \(String(cleanedJsonString.prefix(100)))")
-                
-                if cleanedJsonString.contains("```json") {
-                    print("🔍 Found ```json blocks")
-                    if let startRange = cleanedJsonString.range(of: "```json"),
-                       let endRange = cleanedJsonString.range(of: "```", range: startRange.upperBound..<cleanedJsonString.endIndex) {
-                        cleanedJsonString = String(cleanedJsonString[startRange.upperBound..<endRange.lowerBound])
-                        print("✅ Extracted from ```json blocks")
-                    }
-                } else if cleanedJsonString.contains("```") {
-                    print("🔍 Found ``` blocks")
-                    if let startRange = cleanedJsonString.range(of: "```"),
-                       let endRange = cleanedJsonString.range(of: "```", range: startRange.upperBound..<cleanedJsonString.endIndex) {
-                        cleanedJsonString = String(cleanedJsonString[startRange.upperBound..<endRange.lowerBound])
-                        print("✅ Extracted from ``` blocks")
-                    }
-                } else {
-                    print("🔍 No markdown blocks found")
+            
+            // Clean up the JSON string
+            var cleanedJsonString = response
+            
+            // Remove markdown code blocks if present
+            print("🔍 Checking for markdown blocks in response (first 100 chars): \(String(cleanedJsonString.prefix(100)))")
+            
+            if cleanedJsonString.contains("```json") {
+                print("🔍 Found ```json blocks")
+                if let startRange = cleanedJsonString.range(of: "```json"),
+                   let endRange = cleanedJsonString.range(of: "```", range: startRange.upperBound..<cleanedJsonString.endIndex) {
+                    cleanedJsonString = String(cleanedJsonString[startRange.upperBound..<endRange.lowerBound])
+                    print("✅ Extracted from ```json blocks")
                 }
-                
-                // Additional cleanup for any remaining markdown artifacts
-                cleanedJsonString = cleanedJsonString.trimmingCharacters(in: .whitespacesAndNewlines)
-                
-                // If the string still starts with "```", try to find the actual JSON start
-                if cleanedJsonString.hasPrefix("```") {
-                    if let jsonStart = cleanedJsonString.range(of: "{") {
-                        cleanedJsonString = String(cleanedJsonString[jsonStart.lowerBound...])
-                    }
+            } else if cleanedJsonString.contains("```") {
+                print("🔍 Found ``` blocks")
+                if let startRange = cleanedJsonString.range(of: "```"),
+                   let endRange = cleanedJsonString.range(of: "```", range: startRange.upperBound..<cleanedJsonString.endIndex) {
+                    cleanedJsonString = String(cleanedJsonString[startRange.upperBound..<endRange.lowerBound])
+                    print("✅ Extracted from ``` blocks")
                 }
-                
-                print("After markdown extraction (first 50 chars): \(String(cleanedJsonString.prefix(50)))")
-                
-                // Trim whitespace and newlines
-                cleanedJsonString = cleanedJsonString.trimmingCharacters(in: .whitespacesAndNewlines)
-                
-                // If it still doesn't start with '{', try to find the first '{'
-                if !cleanedJsonString.hasPrefix("{") {
-                    if let braceIndex = cleanedJsonString.firstIndex(of: "{") {
-                        cleanedJsonString = String(cleanedJsonString[braceIndex...])
-                    }
-                }
-                
-                // Also ensure it ends with '}' and remove any trailing content
-                if let lastBraceIndex = cleanedJsonString.lastIndex(of: "}") {
-                    cleanedJsonString = String(cleanedJsonString[...lastBraceIndex])
-                }
-                
-                // Replace literal \n with actual newlines
-                cleanedJsonString = cleanedJsonString.replacingOccurrences(of: "\\n", with: "\n")
-                
-                // Also replace other common escaped characters
-                cleanedJsonString = cleanedJsonString.replacingOccurrences(of: "\\\"", with: "\"")
-                cleanedJsonString = cleanedJsonString.replacingOccurrences(of: "\\t", with: "\t")
-                
-                // Convert fractions to decimal values for JSON parsing
-                cleanedJsonString = convertFractionsToDecimals(cleanedJsonString)
-                
-                print("Extracted JSON string (first 50 chars): \(String(cleanedJsonString.prefix(50)))")
-                print("JSON string starts with '{': \(cleanedJsonString.hasPrefix("{"))")
-                print("JSON string length: \(cleanedJsonString.count)")
-                print("Full JSON string: \(cleanedJsonString)")
-                
-                if let jsonData = cleanedJsonString.data(using: .utf8) {
-                    let recipeJson = try JSONSerialization.jsonObject(with: jsonData) as? [String: Any]
-                    guard let recipeJson = recipeJson else {
-                        print("Failed to cast JSON to dictionary")
-                        return RecipeParsingResult(recipe: recipe, success: false, error: "Invalid JSON structure")
-                    }
-                
-                    recipe.name = recipeJson["recipeName"] as? String
-                    print("Recipe name: \(recipe.name ?? "nil")")
-                    
-                    if let ingredientsArray = recipeJson["ingredients"] as? [[String: Any]] {
-                        var parsedIngredients: [Ingredient] = []
-                        var validationErrors: [String] = []
-                        
-                        for (index, ingredientDict) in ingredientsArray.enumerated() {
-                            guard let name = ingredientDict["name"] as? String,
-                                  let categoryString = ingredientDict["category"] as? String,
-                                  let category = GroceryCategory(rawValue: categoryString) else {
-                                let error = "Failed to parse ingredient at index \(index): \(ingredientDict)"
-                                print(error)
-                                validationErrors.append(error)
-                                continue
-                            }
-                            
-                            // Handle null/optional amount and unit values
-                            let amount: Double
-                            if let amountValue = ingredientDict["amount"] as? Double {
-                                amount = amountValue
-                            } else if let amountValue = ingredientDict["amount"] as? Int {
-                                amount = Double(amountValue)
-                            } else {
-                                // Default to 1 if no amount specified
-                                amount = 1.0
-                            }
-                            
-                            let unit: String
-                            if let unitValue = ingredientDict["unit"] as? String, !unitValue.isEmpty {
-                                unit = unitValue
-                            } else {
-                                // Default to "piece" if no unit specified
-                                unit = "piece"
-                            }
-                            
-                            // Standardize the amount (round to 2 decimal places for consistency)
-                            let standardizedAmount = round(amount * 100) / 100
-                            
-                            // Standardize the unit
-                            let standardizedUnit = standardizeUnit(unit)
-                            
-                            let ingredient = Ingredient(name: name, amount: standardizedAmount, unit: standardizedUnit, category: category)
-                            
-                            // Validate ingredient quality
-                            let validationResult = validateIngredient(ingredient, originalContent: "")
-                            if !validationResult.isValid {
-                                validationErrors.append("Ingredient validation failed for '\(name)': \(validationResult.reason)")
-                            }
-                            
-                            parsedIngredients.append(ingredient)
-                            print("Parsed ingredient: \(ingredient.name) - \(ingredient.amount) \(ingredient.unit) (\(ingredient.category))")
-                        }
-                        
-                        recipe.ingredients = parsedIngredients
-                        print("Total ingredients parsed: \(recipe.ingredients.count)")
-                        
-                        // Check if we have enough ingredients (most recipes have 10-20 ingredients)
-                        if recipe.ingredients.count < 8 {
-                            print("⚠️ Warning: Only \(recipe.ingredients.count) ingredients found - this seems too few for a complete recipe")
-                            validationErrors.append("Suspiciously low ingredient count (\(recipe.ingredients.count)) - may be missing ingredients")
-                        }
-                        
-                        // Calculate confidence score
-                        let confidenceScore = calculateConfidenceScore(ingredients: parsedIngredients, validationErrors: validationErrors)
-                        print("Confidence score: \(confidenceScore)%")
-                        
-                                // Verify ingredients against original content
-        print("🔍 Verifying \(parsedIngredients.count) ingredients against content (length: \(originalContent.count))")
-        print("🔍 Content preview: \(String(originalContent.prefix(1000)))")
-        
-        // Also check if key ingredients are in the content
-        let keyIngredients = ["conchiglie", "pasta", "grape", "tomatoes", "mozzarella", "basil", "olives", "onion", "vinegar"]
-        for ingredient in keyIngredients {
-            if originalContent.lowercased().contains(ingredient.lowercased()) {
-                print("✅ Found '\(ingredient)' in content")
             } else {
-                print("❌ Missing '\(ingredient)' in content")
+                print("🔍 No markdown blocks found")
             }
-        }
-        
-        let verification = verifyIngredientsAgainstContent(parsedIngredients, originalContent: originalContent)
-        print("Verification score: \(verification.verificationScore)%")
-        print("Verified ingredients: \(verification.verifiedIngredients.count)/\(parsedIngredients.count)")
-        
-        for note in verification.notes {
-            print(note)
-        }
-                        
-                        // If confidence is too low, return error
-                        if confidenceScore < 70 {
-                            return RecipeParsingResult(recipe: recipe, success: false, error: "Low confidence score (\(confidenceScore)%) - possible parsing errors")
+            
+            // Additional cleanup for any remaining markdown artifacts
+            cleanedJsonString = cleanedJsonString.trimmingCharacters(in: .whitespacesAndNewlines)
+            
+            // If the string still starts with "```", try to find the actual JSON start
+            if cleanedJsonString.hasPrefix("```") {
+                if let jsonStart = cleanedJsonString.range(of: "{") {
+                    cleanedJsonString = String(cleanedJsonString[jsonStart.lowerBound...])
+                }
+            }
+            
+            print("After markdown extraction (first 50 chars): \(String(cleanedJsonString.prefix(50)))")
+            
+            // Trim whitespace and newlines
+            cleanedJsonString = cleanedJsonString.trimmingCharacters(in: .whitespacesAndNewlines)
+            
+            // If it still doesn't start with '{', try to find the first '{'
+            if !cleanedJsonString.hasPrefix("{") {
+                if let braceIndex = cleanedJsonString.firstIndex(of: "{") {
+                    cleanedJsonString = String(cleanedJsonString[braceIndex...])
+                }
+            }
+            
+            // Also ensure it ends with '}' and remove any trailing content
+            if let lastBraceIndex = cleanedJsonString.lastIndex(of: "}") {
+                cleanedJsonString = String(cleanedJsonString[...lastBraceIndex])
+            }
+            
+            // Replace literal \n with actual newlines
+            cleanedJsonString = cleanedJsonString.replacingOccurrences(of: "\\n", with: "\n")
+            
+            // Also replace other common escaped characters
+            cleanedJsonString = cleanedJsonString.replacingOccurrences(of: "\\\"", with: "\"")
+            cleanedJsonString = cleanedJsonString.replacingOccurrences(of: "\\t", with: "\t")
+            
+            // Convert fractions to decimal values for JSON parsing
+            cleanedJsonString = convertFractionsToDecimals(cleanedJsonString)
+            
+            print("Extracted JSON string (first 50 chars): \(String(cleanedJsonString.prefix(50)))")
+            print("JSON string starts with '{': \(cleanedJsonString.hasPrefix("{"))")
+            print("JSON string length: \(cleanedJsonString.count)")
+            print("Full JSON string: \(cleanedJsonString)")
+            
+            if let jsonData = cleanedJsonString.data(using: .utf8) {
+                let recipeJson = try JSONSerialization.jsonObject(with: jsonData) as? [String: Any]
+                guard let recipeJson = recipeJson else {
+                    print("Failed to cast JSON to dictionary")
+                    return RecipeParsingResult(recipe: recipe, success: false, error: "Invalid JSON structure")
+                }
+            
+                recipe.name = recipeJson["recipeName"] as? String
+                print("Recipe name: \(recipe.name ?? "nil")")
+                
+                if let ingredientsArray = recipeJson["ingredients"] as? [[String: Any]] {
+                    var parsedIngredients: [Ingredient] = []
+                    var validationErrors: [String] = []
+                    
+                    for (index, ingredientDict) in ingredientsArray.enumerated() {
+                        guard let name = ingredientDict["name"] as? String,
+                              let categoryString = ingredientDict["category"] as? String,
+                              let category = GroceryCategory(rawValue: categoryString) else {
+                            let error = "Failed to parse ingredient at index \(index): \(ingredientDict)"
+                            print(error)
+                            validationErrors.append(error)
+                            continue
                         }
                         
-                        // If verification score is too low, reject the parsing
-                        if verification.verificationScore < 30 {
-                            print("❌ Rejecting parsing due to low verification score (\(verification.verificationScore)%) - ingredients don't match original content")
-                            return RecipeParsingResult(recipe: recipe, success: false, error: "Low verification score (\(verification.verificationScore)%) - ingredients may be incorrect or generated rather than extracted")
-                        } else if verification.verificationScore < 60 {
-                            print("⚠️ Warning: Low verification score (\(verification.verificationScore)%) - some ingredients may be incorrect")
-                        } else if verification.verificationScore < 80 {
-                            print("⚠️ Warning: Moderate verification score (\(verification.verificationScore)%) - some ingredients may be incorrect")
+                        // Handle null/optional amount and unit values
+                        let amount: Double
+                        if let amountValue = ingredientDict["amount"] as? Double {
+                            amount = amountValue
+                        } else if let amountValue = ingredientDict["amount"] as? Int {
+                            amount = Double(amountValue)
+                        } else {
+                            // Default to 1 if no amount specified
+                            amount = 1.0
+                        }
+                        
+                        let unit: String
+                        if let unitValue = ingredientDict["unit"] as? String, !unitValue.isEmpty {
+                            unit = unitValue
+                        } else {
+                            // Default to "piece" if no unit specified
+                            unit = "piece"
+                        }
+                        
+                        // Standardize the amount (round to 2 decimal places for consistency)
+                        let standardizedAmount = round(amount * 100) / 100
+                        
+                        // Standardize the unit
+                        let standardizedUnit = standardizeUnit(unit)
+                        
+                        let ingredient = Ingredient(name: name, amount: standardizedAmount, unit: standardizedUnit, category: category)
+                        
+                        // Validate ingredient quality
+                        let validationResult = validateIngredient(ingredient, originalContent: "")
+                        if !validationResult.isValid {
+                            validationErrors.append("Ingredient validation failed for '\(name)': \(validationResult.reason)")
+                        }
+                        
+                        parsedIngredients.append(ingredient)
+                        print("Parsed ingredient: \(ingredient.name) - \(ingredient.amount) \(ingredient.unit) (\(ingredient.category))")
+                    }
+                    
+                    recipe.ingredients = parsedIngredients
+                    print("Total ingredients parsed: \(recipe.ingredients.count)")
+                    
+                    // Check if we have enough ingredients (most recipes have 10-20 ingredients)
+                    if recipe.ingredients.count < 8 {
+                        print("⚠️ Warning: Only \(recipe.ingredients.count) ingredients found - this seems too few for a complete recipe")
+                        validationErrors.append("Suspiciously low ingredient count (\(recipe.ingredients.count)) - may be missing ingredients")
+                    }
+                    
+                    // Calculate confidence score
+                    let confidenceScore = calculateConfidenceScore(ingredients: parsedIngredients, validationErrors: validationErrors)
+                    print("Confidence score: \(confidenceScore)%")
+                    
+                    // Verify ingredients against original content
+                    print("🔍 Verifying \(parsedIngredients.count) ingredients against content (length: \(originalContent.count))")
+                    print("🔍 Content preview: \(String(originalContent.prefix(1000)))")
+                    
+                    // Also check if key ingredients are in the content
+                    let keyIngredients = ["conchiglie", "pasta", "grape", "tomatoes", "mozzarella", "basil", "olives", "onion", "vinegar"]
+                    for ingredient in keyIngredients {
+                        if originalContent.lowercased().contains(ingredient.lowercased()) {
+                            print("✅ Found '\(ingredient)' in content")
+                        } else {
+                            print("❌ Missing '\(ingredient)' in content")
                         }
                     }
                     
-                    recipe.isParsed = true
-                    return RecipeParsingResult(recipe: recipe, success: true, error: nil)
+                    let verification = verifyIngredientsAgainstContent(parsedIngredients, originalContent: originalContent)
+                    print("Verification score: \(verification.verificationScore)%")
+                    print("Verified ingredients: \(verification.verifiedIngredients.count)/\(parsedIngredients.count)")
+                    
+                    for note in verification.notes {
+                        print(note)
+                    }
+                    
+                    // If confidence is too low, return error
+                    if confidenceScore < 70 {
+                        return RecipeParsingResult(recipe: recipe, success: false, error: "Low confidence score (\(confidenceScore)%) - possible parsing errors")
+                    }
+                    
+                    // If verification score is too low, reject the parsing
+                    if verification.verificationScore < 30 {
+                        print("❌ Rejecting parsing due to low verification score (\(verification.verificationScore)%) - ingredients don't match original content")
+                        return RecipeParsingResult(recipe: recipe, success: false, error: "Low verification score (\(verification.verificationScore)%) - ingredients may be incorrect or generated rather than extracted")
+                    } else if verification.verificationScore < 60 {
+                        print("⚠️ Warning: Low verification score (\(verification.verificationScore)%) - some ingredients may be incorrect")
+                    } else if verification.verificationScore < 80 {
+                        print("⚠️ Warning: Moderate verification score (\(verification.verificationScore)%) - some ingredients may be incorrect")
+                    }
                 }
+                
+                recipe.isParsed = true
+                return RecipeParsingResult(recipe: recipe, success: true, error: nil)
             }
         } catch {
             print("JSON parsing error: \(error)")
@@ -2016,6 +2027,7 @@ class LLMService: ObservableObject {
         print("🔄 Converted fractions to decimals in JSON")
         return result
     }
+}
 
 enum LLMServiceError: Error {
     case invalidURL

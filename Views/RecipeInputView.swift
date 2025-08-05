@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct RecipeInputView: View {
-    @StateObject private var llmService = LLMService(apiKey: "") // API key managed on Vercel
+    @StateObject private var llmService = LLMService() // API key managed on Vercel
     @ObservedObject var dataManager: DataManager
     let targetList: GroceryList? // Optional: if nil, use current list
     @Environment(\.dismiss) private var dismiss
