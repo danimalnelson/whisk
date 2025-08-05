@@ -24,7 +24,7 @@ export default async function handler(req, res) {
             content: prompt
           }
         ],
-        max_tokens: 2000,
+        max_tokens: 4000,
         temperature: 0.1
       })
     });
@@ -35,9 +35,18 @@ export default async function handler(req, res) {
     }
 
     const data = await response.json();
+    
+    if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+      throw new Error('Invalid response format from OpenAI API');
+    }
+    
+    const content = data.choices[0].message.content;
+    console.log('OpenAI response length:', content.length);
+    console.log('OpenAI response preview:', content.substring(0, 200));
+    
     res.json({
       success: true,
-      content: data.choices[0].message.content
+      content: content
     });
   } catch (error) {
     console.error('Error calling OpenAI:', error);
