@@ -46,11 +46,6 @@ struct GroceryListView: View {
                                     }
                                     
                                     Spacer()
-                                    
-                                    if dataManager.currentList?.id == list.id {
-                                        Image(systemName: "checkmark")
-                                            .foregroundColor(.blue)
-                                    }
                                 }
                             }
                         }
