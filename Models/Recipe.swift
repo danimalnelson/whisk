@@ -1,7 +1,7 @@
 import Foundation
 
 struct Recipe: Identifiable, Codable {
-    let id = UUID()
+    let id: UUID
     var url: String
     var name: String?
     var ingredients: [Ingredient]
@@ -9,6 +9,7 @@ struct Recipe: Identifiable, Codable {
     var parsingError: String?
     
     init(url: String) {
+        self.id = UUID()
         self.url = url
         self.ingredients = []
     }

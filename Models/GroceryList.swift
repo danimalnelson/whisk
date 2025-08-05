@@ -1,13 +1,14 @@
 import Foundation
 
 struct GroceryList: Identifiable, Codable {
-    let id = UUID()
+    let id: UUID
     var name: String
     var ingredients: [Ingredient]
     var createdAt: Date
     var isActive: Bool = true
     
     init(name: String, ingredients: [Ingredient] = []) {
+        self.id = UUID()
         self.name = name
         self.ingredients = ingredients
         self.createdAt = Date()

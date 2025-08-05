@@ -157,8 +157,8 @@ struct RecipeInputView: View {
                             print("📋 Success count: \(successCount), Total count: \(totalCount)")
                             
                             // Add ingredients to the target list
-                            if let recipe = result.recipe, recipe.ingredients.count > 0 {
-                                addIngredientsToGroceryList(recipe.ingredients)
+                            if result.recipe.ingredients.count > 0 {
+                                addIngredientsToGroceryList(result.recipe.ingredients)
                             }
                         } else {
                             print("❌ Failed to parse recipe: \(result.error ?? "Unknown error")")
@@ -197,10 +197,14 @@ struct RecipeInputView: View {
         print("📋 Recipe name: \(ingredients.first?.name ?? "Unknown")")
         print("📋 Recipe ingredients count: \(ingredients.count)")
         print("📋 Total ingredients to add: \(ingredients.count)")
-        print("📋 Target list: \(targetGroceryList.name)")
-        print("📋 Adding ingredients to target list: \(targetGroceryList.name)")
+        print("📋 Target list: \(targetGroceryList?.name ?? "Unknown")")
+        print("📋 Adding ingredients to target list: \(targetGroceryList?.name ?? "Unknown")")
         
-        dataManager.addIngredientsToGroceryList(ingredients, targetList: targetGroceryList)
+        if let targetList = targetGroceryList {
+            dataManager.addIngredientsToList(ingredients, list: targetList)
+        } else {
+            dataManager.addIngredientsToCurrentList(ingredients)
+        }
     }
 }
 
