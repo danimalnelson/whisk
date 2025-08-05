@@ -30,6 +30,26 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		3768D20C2E41B845005024E2 /* Models */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Models;
+			sourceTree = "<group>";
+		};
+		3768D2112E41B849005024E2 /* Preview Content */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = "Preview Content";
+			sourceTree = "<group>";
+		};
+		3768D2152E41B84B005024E2 /* Services */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Services;
+			sourceTree = "<group>";
+		};
+		3768D21B2E41B84D005024E2 /* Views */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Views;
+			sourceTree = "<group>";
+		};
 		376E9C662E41A3F900B84B91 /* Whisk */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = Whisk;
@@ -75,6 +95,10 @@
 		376E9C5B2E41A3F900B84B91 = {
 			isa = PBXGroup;
 			children = (
+				3768D20C2E41B845005024E2 /* Models */,
+				3768D2112E41B849005024E2 /* Preview Content */,
+				3768D2152E41B84B005024E2 /* Services */,
+				3768D21B2E41B84D005024E2 /* Views */,
 				376E9C662E41A3F900B84B91 /* Whisk */,
 				376E9C752E41A3FA00B84B91 /* WhiskTests */,
 				376E9C7F2E41A3FA00B84B91 /* WhiskUITests */,
@@ -108,6 +132,10 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
+				3768D20C2E41B845005024E2 /* Models */,
+				3768D2112E41B849005024E2 /* Preview Content */,
+				3768D2152E41B84B005024E2 /* Services */,
+				3768D21B2E41B84D005024E2 /* Views */,
 				376E9C662E41A3F900B84B91 /* Whisk */,
 			);
 			name = Whisk;
