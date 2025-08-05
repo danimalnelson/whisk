@@ -263,7 +263,7 @@ class LLMService: ObservableObject {
     
     private func callVercelAPI(recipeURL: String) async throws -> String {
         // Call our Vercel function instead of OpenAI directly
-        guard let url = URL(string: "https://whisk-server-drbpoit5r-dannelson.vercel.app/api/parse-recipe") else {
+        guard let url = URL(string: "https://whisk-server-uf76d8ssy-dannelson.vercel.app/api/parse-recipe") else {
             throw LLMServiceError.invalidURL
         }
         
