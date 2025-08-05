@@ -19,24 +19,12 @@ class LLMService: ObservableObject {
     func parseRecipe(from url: String) async throws -> RecipeParsingResult {
         print("Starting recipe parsing for URL: \(url)")
         
-        // First, fetch the webpage content
-        let webpageContent = try await fetchWebpageContent(from: url)
-        print("Fetched webpage content length: \(webpageContent.count)")
+        // Call our Vercel function with the recipe URL
+        let response = try await callVercelAPI(recipeURL: url)
+        print("Received Vercel API response length: \(response.count)")
         
-        // Extract just the ingredient section
-        let ingredientSection = extractIngredientSection(from: webpageContent)
-        print("Extracted ingredient section length: \(ingredientSection.count)")
-        
-        // Create the prompt for the LLM using only the ingredient section
-        let prompt = createRecipeParsingPrompt(ingredientContent: ingredientSection)
-        print("Created prompt length: \(prompt.count)")
-        
-        // Call the LLM
-        let response = try await callLLM(prompt: prompt)
-        print("Received LLM response length: \(response.count)")
-        
-        // Parse the LLM response
-        return parseLLMResponse(response, originalURL: url, originalContent: webpageContent)
+        // Parse the response
+        return parseLLMResponse(response, originalURL: url, originalContent: "")
     }
     
     private func fetchWebpageContent(from url: String) async throws -> String {
@@ -272,8 +260,6 @@ class LLMService: ObservableObject {
         \(ingredientContent)
         """
     }
-    
-
     
     private func callLLM(prompt: String) async throws -> String {
         print("🤖 Calling Vercel API for OpenAI...")
