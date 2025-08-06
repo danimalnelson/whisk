@@ -1,37 +1,47 @@
 import Foundation
 
 class LLMService: ObservableObject {
-    private let baseURL = "https://whisk-server-97zqsyqbp-dannelson.vercel.app/api/call-openai"
+    private let apiKey: String
+    private let baseURL: String
+    private let model: String
     
-    init() {
+    init(apiKey: String = "", useOpenAI: Bool = true) {
+        self.apiKey = apiKey
+        if useOpenAI {
+            self.baseURL = "https://api.openai.com/v1/chat/completions"
+            self.model = "gpt-4o-mini" // Cheaper option
+        } else {
+            self.baseURL = "https://api.anthropic.com/v1/messages"
+            self.model = "claude-3-haiku-20240307" // Cheaper option
+        }
     }
     
     func parseRecipe(from url: String) async throws -> RecipeParsingResult {
-        print("⏱️ === Recipe Parsing Start ===")
-        let totalStartTime = CFAbsoluteTimeGetCurrent()
+        print("Starting recipe parsing for URL: \(url)")
         
-        // Fetch and process webpage
+        // First, fetch the webpage content
         let webpageContent = try await fetchWebpageContent(from: url)
+        print("Fetched webpage content length: \(webpageContent.count)")
+        
+        // Extract just the ingredient section
         let ingredientSection = extractIngredientSection(from: webpageContent)
+        print("Extracted ingredient section length: \(ingredientSection.count)")
+        
+        // Create the prompt for the LLM using only the ingredient section
         let prompt = createRecipeParsingPrompt(ingredientContent: ingredientSection)
+        print("Created prompt length: \(prompt.count)")
         
-        // Call LLM
-        let llmStartTime = CFAbsoluteTimeGetCurrent()
+        // Call the LLM
         let response = try await callLLM(prompt: prompt)
-        let llmTime = CFAbsoluteTimeGetCurrent() - llmStartTime
-        print("⏱️ LLM processing: \(String(format: "%.2f", llmTime))s")
+        print("Received LLM response length: \(response.count)")
         
-        // Parse response
-        let result = parseLLMResponse(response, originalURL: url, originalContent: webpageContent)
-        
-        let totalTime = CFAbsoluteTimeGetCurrent() - totalStartTime
-        print("⏱️ Total time: \(String(format: "%.2f", totalTime))s")
-        print("⏱️ === Recipe Parsing End ===")
-        
-        return result
+        // Parse the LLM response
+        return parseLLMResponse(response, originalURL: url, originalContent: webpageContent)
     }
     
     private func fetchWebpageContent(from url: String) async throws -> String {
+        print("🔗 Fetching webpage from: \(url)")
+        
         guard let url = URL(string: url) else {
             print("❌ Invalid URL: \(url)")
             throw LLMServiceError.invalidURL
@@ -44,8 +54,12 @@ class LLMService: ObservableObject {
             throw LLMServiceError.invalidResponse
         }
         
+        print("📡 HTTP Status: \(httpResponse.statusCode)")
+        
         if httpResponse.statusCode != 200 {
             print("❌ HTTP Error: \(httpResponse.statusCode)")
+            let errorString = String(data: data, encoding: .utf8) ?? "Unknown error"
+            print("❌ Error content: \(errorString)")
             throw LLMServiceError.invalidResponse
         }
         
@@ -54,59 +68,24 @@ class LLMService: ObservableObject {
             throw LLMServiceError.invalidResponse
         }
         
-        // ULTRA-AGGRESSIVE: Extract only ingredient lines
-        let startTime = CFAbsoluteTimeGetCurrent()
-        var textContent = ""
+        print("📄 Raw HTML length: \(htmlString.count)")
         
-        // Extract only lines that contain measurements
-        let lines = htmlString.components(separatedBy: .newlines)
-        var ingredientLines: [String] = []
-        var timings: [String: Double] = [:]
-        
-        for line in lines {
-            let cleanLine = line
-                .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
-                .replacingOccurrences(of: "&nbsp;", with: " ")
-                .replacingOccurrences(of: "&amp;", with: "&")
-                .replacingOccurrences(of: "&lt;", with: "<")
-                .replacingOccurrences(of: "&gt;", with: ">")
-                .replacingOccurrences(of: "&quot;", with: "\"")
-                .replacingOccurrences(of: "&#39;", with: "'")
-                .replacingOccurrences(of: "&rsquo;", with: "'")
-                .replacingOccurrences(of: "&lsquo;", with: "'")
-                .replacingOccurrences(of: "&mdash;", with: "—")
-                .replacingOccurrences(of: "&ndash;", with: "–")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            
-            if !cleanLine.isEmpty {
-                let lowercasedLine = cleanLine.lowercased()
-                // Only keep lines with measurements
-                if lowercasedLine.contains("cup") || lowercasedLine.contains("tablespoon") || 
-                   lowercasedLine.contains("teaspoon") || lowercasedLine.contains("ounce") || 
-                   lowercasedLine.contains("pound") || lowercasedLine.contains("gram") ||
-                   lowercasedLine.contains("clove") || lowercasedLine.contains("medium") ||
-                   lowercasedLine.contains("small") || lowercasedLine.contains("large") ||
-                   lowercasedLine.contains("ml") || lowercasedLine.contains("g ") ||
-                   lowercasedLine.contains("kg") || lowercasedLine.contains("l ") ||
-                   lowercasedLine.contains("tbsp") || lowercasedLine.contains("tsp") {
-                    ingredientLines.append(cleanLine)
-                }
-            }
-        }
-        
-        textContent = ingredientLines.joined(separator: "\n")
-        timings["lineFiltering"] = CFAbsoluteTimeGetCurrent() - startTime
-        print("⏱️ Line filtering time: \(String(format: "%.2f", timings["lineFiltering"]!)) seconds")
-        print("📋 Filtered to \(ingredientLines.count) ingredient lines")
-        
-        // HARD LIMIT: Truncate to 1000 characters max
-        if textContent.count > 1000 {
-            textContent = String(textContent.prefix(1000))
-            textContent += "\n\n[Content truncated...]"
-        }
+        // Enhanced approach: Extract text while preserving ingredient information
+        var textContent = htmlString
+            .replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression) // Replace tags with spaces instead of removing
+            .replacingOccurrences(of: "&nbsp;", with: " ")
+            .replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&#39;", with: "'")
+            .replacingOccurrences(of: "&rsquo;", with: "'")
+            .replacingOccurrences(of: "&lsquo;", with: "'")
+            .replacingOccurrences(of: "&mdash;", with: "—")
+            .replacingOccurrences(of: "&ndash;", with: "–")
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression) // Normalize whitespace
         
         // First, try to extract ingredients from HTML list elements
-        let listStartTime = CFAbsoluteTimeGetCurrent()
         let listPatterns = [
             #"<ul[^>]*>(.*?)</ul>"#,
             #"<ol[^>]*>(.*?)</ol>"#
@@ -161,15 +140,11 @@ class LLMService: ObservableObject {
         }
         
         // If we found ingredients in lists, use them; otherwise look for ingredient section
-        timings["listParsing"] = CFAbsoluteTimeGetCurrent() - listStartTime
-        print("⏱️ List parsing time: \(String(format: "%.2f", timings["listParsing"]!)) seconds")
-        
         if !extractedIngredients.isEmpty {
             textContent = extractedIngredients.joined(separator: "\n")
             print("📋 Found \(extractedIngredients.count) ingredients in HTML lists")
         } else {
             // Fallback: Look for ingredient section specifically
-            let sectionStartTime = CFAbsoluteTimeGetCurrent()
             let ingredientKeywords = ["ingredients", "ingredient", "recipe details", "what you need", "you'll need"]
             let lines = textContent.components(separatedBy: .newlines)
             var ingredientSection: [String] = []
@@ -201,9 +176,6 @@ class LLMService: ObservableObject {
             }
             
             // If we found an ingredient section, use it; otherwise use full content
-            timings["sectionParsing"] = CFAbsoluteTimeGetCurrent() - sectionStartTime
-            print("⏱️ Section parsing time: \(String(format: "%.2f", timings["sectionParsing"]!)) seconds")
-            
             if !ingredientSection.isEmpty {
                 textContent = ingredientSection.joined(separator: "\n")
                 print("📋 Found ingredient section with \(ingredientSection.count) lines")
@@ -228,32 +200,106 @@ class LLMService: ObservableObject {
         Parse ingredients into {"ingredients":[{"name":X,"amount":Y,"unit":Z,"category":C}]}
 
         Rules:
-        1. name: Remove prep words, keep essential descriptors
+        1. name: The ingredient name should be what you would buy at the store (e.g., "black beans", "rosemary", "garlic cloves")
         2. amount: Convert ALL fractions to decimals (default to 1 if no amount)
-        3. unit: Standardize to full words (default to "piece" if no unit)
+        3. unit: PRESERVE the original quantity/unit from the recipe. Use singular form for 1, plural for >1. Only use weight measurements (ounces, pounds, grams) if that's what's explicitly stated in the recipe. For individual items, use "" (empty string) or omit unit entirely. NEVER use "pieces" as a unit - it's not a valid measurement.
         4. category: Must be one of [Produce, Meat & Seafood, Deli, Bakery, Frozen, Pantry, Dairy, Beverages]
+        5. SKIP water ingredients - do not include them in the output
+        6. ALL vinegars (white wine vinegar, red wine vinegar, apple cider vinegar, etc.) should be categorized as "Pantry"
+        7. ALL wines (dry wine, rice wine, white wine, red wine, etc.) should be categorized as "Beverages"
+        8. Lemon juice and lime juice should be categorized as "Pantry" (not Beverages)
+        9. Banana pepper rings are jarred and should be categorized as "Pantry"
 
         Examples showing exact expected output:
-        "2 1/2 tbsp finely chopped fresh basil"
-        {"name":"basil","amount":2.5,"unit":"tablespoons","category":"Produce"}
+        "3 small red bell peppers"
+        {"name":"red bell peppers","amount":3,"unit":"","category":"Produce"}
 
-        "1 (14.5 oz) can diced tomatoes, drained"
-        {"name":"tomatoes","amount":14.5,"unit":"ounces","category":"Pantry"}
+        "1 large shallot"
+        {"name":"shallot","amount":1,"unit":"","category":"Produce"}
 
-        "3 large cloves garlic, minced"
-        {"name":"garlic","amount":3,"unit":"large cloves","category":"Produce"}
+        "5 medium cloves garlic"
+        {"name":"garlic cloves","amount":5,"unit":"","category":"Produce"}
 
-        "1 lb medium shrimp (31-40 count), peeled and deveined"
+        "2 cups grape tomatoes"
+        {"name":"grape tomatoes","amount":2,"unit":"cups","category":"Produce"}
+
+        "1 cup olive oil"
+        {"name":"olive oil","amount":1,"unit":"cup","category":"Pantry"}
+
+        "1/2 cup olive oil"
+        {"name":"olive oil","amount":0.5,"unit":"cup","category":"Pantry"}
+
+        "1 pound shrimp"
         {"name":"shrimp","amount":1,"unit":"pound","category":"Meat & Seafood"}
 
-        "crispy shallots"
-        {"name":"crispy shallots","amount":1,"unit":"piece","category":"Produce"}
+        "2 pounds shrimp"
+        {"name":"shrimp","amount":2,"unit":"pounds","category":"Meat & Seafood"}
 
-        "1/2 cup dry white wine"
-        {"name":"white wine","amount":0.5,"unit":"cup","category":"Beverages"}
+        "1 tablespoon olive oil"
+        {"name":"olive oil","amount":1,"unit":"tablespoon","category":"Pantry"}
 
-        "1/4 cup fresh lemon juice"
-        {"name":"lemon juice","amount":0.25,"unit":"cup","category":"Produce"}
+        "2 tablespoons olive oil"
+        {"name":"olive oil","amount":2,"unit":"tablespoons","category":"Pantry"}
+
+        "1/4 cup white wine vinegar"
+        {"name":"white wine vinegar","amount":0.25,"unit":"cup","category":"Pantry"}
+
+        "1/2 cup red wine vinegar"
+        {"name":"red wine vinegar","amount":0.5,"unit":"cup","category":"Pantry"}
+
+        "1/4 cup white wine vinegar"
+        {"name":"white wine vinegar","amount":0.25,"unit":"cup","category":"Pantry"}
+
+        "1/2 cup dry wine"
+        {"name":"dry wine","amount":0.5,"unit":"cup","category":"Beverages"}
+
+        "1/4 cup rice wine"
+        {"name":"rice wine","amount":0.25,"unit":"cup","category":"Beverages"}
+
+        "1/4 cup lemon juice"
+        {"name":"lemon juice","amount":0.25,"unit":"cup","category":"Pantry"}
+
+        "2 tablespoons lime juice"
+        {"name":"lime juice","amount":2,"unit":"tablespoons","category":"Pantry"}
+
+        "1/2 cup banana pepper rings"
+        {"name":"banana pepper rings","amount":0.5,"unit":"cup","category":"Pantry"}
+
+        "2 ripe medium avocados"
+        {"name":"avocados","amount":2,"unit":"","category":"Produce"}
+
+        "8 thin tomato slices"
+        {"name":"tomatoes","amount":8,"unit":"","category":"Produce"}
+
+        "12 raw onion rings"
+        {"name":"onion","amount":12,"unit":"","category":"Produce"}
+
+        "4 cemita buns"
+        {"name":"cemita buns","amount":4,"unit":"","category":"Bakery"}
+
+        "3 sprigs tarragon"
+        {"name":"tarragon sprigs","amount":3,"unit":"","category":"Produce"}
+
+        "5 medium cloves garlic"
+        {"name":"garlic cloves","amount":5,"unit":"","category":"Produce"}
+
+        "2 ripe medium avocados"
+        {"name":"avocados","amount":2,"unit":"","category":"Produce"}
+
+        "8 thin tomato slices"
+        {"name":"tomatoes","amount":8,"unit":"","category":"Produce"}
+
+        "12 raw onion rings"
+        {"name":"onion","amount":12,"unit":"","category":"Produce"}
+
+        "2 celery stalks"
+        {"name":"celery stalks","amount":2,"unit":"","category":"Produce"}
+
+        "4 papaya leaves"
+        {"name":"papaya leaves","amount":4,"unit":"","category":"Produce"}
+
+        "1/2 cup mayonnaise"
+        {"name":"mayonnaise","amount":0.5,"unit":"cup","category":"Pantry"}
 
         Now parse exactly as shown:
         \(ingredientContent)
@@ -261,16 +307,18 @@ class LLMService: ObservableObject {
     }
     
     private func callLLM(prompt: String) async throws -> String {
-        let startTime = CFAbsoluteTimeGetCurrent()
+        print("🤖 Calling Vercel API for OpenAI...")
         
-        guard let url = URL(string: baseURL) else {
+        guard let url = URL(string: "https://whisk-server-97zqsyqbp-dannelson.vercel.app/api/call-openai") else {
             throw LLMServiceError.invalidURL
         }
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: ["prompt": prompt])
+        
+        let requestBody = ["prompt": prompt]
+        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
         
         let (data, response) = try await URLSession.shared.data(for: request)
         
@@ -278,9 +326,11 @@ class LLMService: ObservableObject {
             throw LLMServiceError.invalidResponse
         }
         
+        print("🤖 Vercel API Status: \(httpResponse.statusCode)")
+        
         if httpResponse.statusCode != 200 {
             let errorString = String(data: data, encoding: .utf8) ?? "Unknown error"
-            print("❌ API Error: \(errorString)")
+            print("🤖 Vercel API Error: \(errorString)")
             throw LLMServiceError.apiError
         }
         
@@ -291,24 +341,25 @@ class LLMService: ObservableObject {
             throw LLMServiceError.parsingError
         }
         
-        // Log server metrics if available
-        if let metrics = jsonResponse["metrics"] as? [String: Any] {
-            if let apiCallTime = metrics["apiCallTime"] as? Int {
-                print("⏱️ OpenAI API: \(apiCallTime)ms")
-            }
-            if let tokens = metrics["tokens"] as? Int {
-                print("📊 Tokens: \(tokens)")
-            }
-        }
-        
-        let totalTime = CFAbsoluteTimeGetCurrent() - startTime
-        print("⏱️ Total API time: \(String(format: "%.2f", totalTime))s")
-        
+        print("🤖 LLM Response length: \(content.count)")
+        print("🤖 LLM Response (first 200 chars): \(String(content.prefix(200)))")
+        print("🤖 LLM Response (last 200 chars): \(String(content.suffix(200)))")
         return content
     }
     
     private func createRequestBody(prompt: String) -> [String: Any] {
-        return ["prompt": prompt]
+        // This would need to be adjusted based on whether using OpenAI or Anthropic
+        return [
+            "model": model,
+            "messages": [
+                [
+                    "role": "user",
+                    "content": prompt
+                ]
+            ],
+            "max_tokens": 2000,
+            "temperature": 0.1
+        ]
     }
     
     private func parseLLMResponse(_ response: String, originalURL: String, originalContent: String = "") -> RecipeParsingResult {
@@ -317,21 +368,30 @@ class LLMService: ObservableObject {
         
         do {
             // The response is already the raw LLM content (extracted from Vercel API response)
+            print("Using response directly as content")
             
             // Clean up the JSON string
             var cleanedJsonString = response
             
             // Remove markdown code blocks if present
+            print("🔍 Checking for markdown blocks in response (first 100 chars): \(String(cleanedJsonString.prefix(100)))")
+            
             if cleanedJsonString.contains("```json") {
+                print("🔍 Found ```json blocks")
                 if let startRange = cleanedJsonString.range(of: "```json"),
                    let endRange = cleanedJsonString.range(of: "```", range: startRange.upperBound..<cleanedJsonString.endIndex) {
                     cleanedJsonString = String(cleanedJsonString[startRange.upperBound..<endRange.lowerBound])
+                    print("✅ Extracted from ```json blocks")
                 }
             } else if cleanedJsonString.contains("```") {
+                print("🔍 Found ``` blocks")
                 if let startRange = cleanedJsonString.range(of: "```"),
                    let endRange = cleanedJsonString.range(of: "```", range: startRange.upperBound..<cleanedJsonString.endIndex) {
                     cleanedJsonString = String(cleanedJsonString[startRange.upperBound..<endRange.lowerBound])
+                    print("✅ Extracted from ``` blocks")
                 }
+            } else {
+                print("🔍 No markdown blocks found")
             }
             
             // Additional cleanup for any remaining markdown artifacts
@@ -343,6 +403,8 @@ class LLMService: ObservableObject {
                     cleanedJsonString = String(cleanedJsonString[jsonStart.lowerBound...])
                 }
             }
+            
+            print("After markdown extraction (first 50 chars): \(String(cleanedJsonString.prefix(50)))")
             
             // Trim whitespace and newlines
             cleanedJsonString = cleanedJsonString.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -398,13 +460,44 @@ class LLMService: ObservableObject {
                             continue
                         }
                         
-                        // Process and standardize the ingredient
-                        let ingredient = processAndStandardizeIngredient(
-                            name: name,
-                            amount: ingredientDict["amount"],
-                            unit: ingredientDict["unit"],
-                            category: category
-                        )
+                        // Handle null/optional amount and unit values
+                        let amount: Double
+                        if let amountValue = ingredientDict["amount"] as? Double {
+                            amount = amountValue
+                        } else if let amountValue = ingredientDict["amount"] as? Int {
+                            amount = Double(amountValue)
+                        } else {
+                            // Default to 1 if no amount specified
+                            amount = 1.0
+                        }
+                        
+                        let unit: String
+                        if let unitValue = ingredientDict["unit"] as? String, !unitValue.isEmpty {
+                            unit = unitValue
+                        } else {
+                            // Default to "piece" if no unit specified
+                            unit = "piece"
+                        }
+                        
+                        // Standardize the amount (round to 2 decimal places for consistency)
+                        let standardizedAmount = round(amount * 100) / 100
+                        
+                        // Clean and standardize the unit
+                        let cleanedUnit = cleanUnit(unit)
+                        
+                        // If no unit or invalid unit, use empty string
+                        let finalUnit: String
+                        if cleanedUnit.isEmpty || cleanedUnit == "piece" {
+                            finalUnit = ""
+                        } else {
+                            // Apply singular/plural logic based on amount
+                            finalUnit = applySingularPluralLogic(cleanedUnit, amount: standardizedAmount)
+                        }
+                        
+                        // Apply title case to the ingredient name
+                        let titleCaseName = applyTitleCase(to: name)
+                        
+                        let ingredient = Ingredient(name: titleCaseName, amount: standardizedAmount, unit: finalUnit, category: category)
                         
                         // Validate ingredient quality
                         let validationResult = validateIngredient(ingredient, originalContent: "")
@@ -444,13 +537,11 @@ class LLMService: ObservableObject {
                     }
                     
                     let verification = verifyIngredientsAgainstContent(parsedIngredients, originalContent: originalContent)
+                    print("Verification score: \(verification.verificationScore)%")
+                    print("Verified ingredients: \(verification.verifiedIngredients.count)/\(parsedIngredients.count)")
                     
-                    // Only log verification details if there are issues
-                    if verification.verificationScore < 80 {
-                        print("⚠️ Verification score: \(verification.verificationScore)% (\(verification.verifiedIngredients.count)/\(parsedIngredients.count) ingredients verified)")
-                        for note in verification.notes {
-                            print("   \(note)")
-                        }
+                    for note in verification.notes {
+                        print(note)
                     }
                     
                     // If confidence is too low, return error
@@ -526,16 +617,18 @@ class LLMService: ObservableObject {
             "cup", "cups", "tablespoon", "tablespoons", "teaspoon", "teaspoons",
             "ounce", "ounces", "pound", "pounds", "gram", "grams", "kilogram", "kilograms",
             "ml", "l", "g", "kg", "oz", "lb", "tbsp", "tsp",
-            "small", "medium", "large", "clove", "cloves", "slice", "slices",
+            "clove", "cloves", "slice", "slices",
             "piece", "pieces", "can", "cans", "jar", "jars", "bottle", "bottles",
             "package", "packages", "bag", "bags", "bunch", "bunches", "head", "heads",
             "count"
         ]
         
         let lowercasedUnit = ingredient.unit.lowercased()
-        let hasValidUnit = validUnits.contains { validUnit in
-            lowercasedUnit.contains(validUnit)
-        }
+        // Check for exact match or if the unit is a valid measurement unit
+        let hasValidUnit = validUnits.contains(lowercasedUnit) || 
+                          validUnits.contains { validUnit in
+                              lowercasedUnit == validUnit
+                          }
         
         if !hasValidUnit {
             return IngredientValidation(isValid: false, reason: "Unrecognized unit: '\(ingredient.unit)'")
@@ -766,8 +859,7 @@ class LLMService: ObservableObject {
             "count": "count",
             "slice": "slices",
             "slices": "slices",
-            "piece": "pieces",
-            "pieces": "pieces",
+
             "can": "cans",
             "cans": "cans",
             "jar": "jars",
@@ -792,138 +884,8 @@ class LLMService: ObservableObject {
         ]
         
         let standardizedUnit = unitMappings[lowercasedUnit] ?? lowercasedUnit
+        print("🔄 Standardized unit: '\(unit)' → '\(standardizedUnit)'")
         return standardizedUnit
-    }
-    
-    // MARK: - Centralized Ingredient Processing
-    
-    private func processAndStandardizeIngredient(name: String, amount: Any?, unit: Any?, category: GroceryCategory) -> Ingredient {
-        // 1. Clean and standardize the ingredient name
-        let cleanedName = cleanIngredientName(name)
-        
-        // 2. Process and standardize the amount
-        let standardizedAmount = processAndStandardizeAmount(amount)
-        
-        // 3. Process and standardize the unit
-        let standardizedUnit = processAndStandardizeUnit(unit)
-        
-        // 4. Validate and potentially adjust category based on cleaned name
-        let validatedCategory = validateAndAdjustCategory(cleanedName, originalCategory: category)
-        
-        // 5. Create the standardized ingredient
-        return Ingredient(name: cleanedName, amount: standardizedAmount, unit: standardizedUnit, category: validatedCategory)
-    }
-    
-    private func processAndStandardizeAmount(_ amount: Any?) -> Double {
-        // Handle null/optional amount values
-        let processedAmount: Double
-        if let amountValue = amount as? Double {
-            processedAmount = amountValue
-        } else if let amountValue = amount as? Int {
-            processedAmount = Double(amountValue)
-        } else {
-            // Default to 1 if no amount specified
-            processedAmount = 1.0
-        }
-        
-        // Standardize the amount (round to 2 decimal places for consistency)
-        return round(processedAmount * 100) / 100
-    }
-    
-    private func processAndStandardizeUnit(_ unit: Any?) -> String {
-        // Handle null/optional unit values
-        let processedUnit: String
-        if let unitValue = unit as? String, !unitValue.isEmpty {
-            processedUnit = unitValue
-        } else {
-            // Default to "piece" if no unit specified
-            processedUnit = "piece"
-        }
-        
-        // Standardize the unit using existing logic
-        return standardizeUnit(processedUnit)
-    }
-    
-    private func validateAndAdjustCategory(_ name: String, originalCategory: GroceryCategory) -> GroceryCategory {
-        // Common ingredient keywords for each category
-        let categoryKeywords: [GroceryCategory: Set<String>] = [
-            .produce: ["tomato", "tomatoes", "onion", "onions", "garlic", "lettuce", "carrot", "carrots", 
-                      "pepper", "peppers", "cucumber", "basil", "herb", "herbs", "vegetable", "vegetables",
-                      "fruit", "fruits", "lemon", "lime", "orange", "apple", "banana", "berry", "berries"],
-            .meatAndSeafood: ["chicken", "beef", "pork", "fish", "salmon", "shrimp", "meat", "steak", 
-                             "turkey", "lamb", "seafood", "tuna", "cod", "sausage"],
-            .deli: ["ham", "salami", "prosciutto", "deli", "cold cut", "cold cuts", "genoa"],
-            .bakery: ["bread", "roll", "rolls", "bun", "buns", "bagel", "muffin", "cake", "pastry"],
-            .frozen: ["frozen", "ice cream", "ice", "freezer"],
-            .pantry: ["flour", "sugar", "salt", "spice", "spices", "oil", "vinegar", "sauce", "pasta", 
-                     "rice", "bean", "beans", "canned", "dry", "dried", "wine vinegar", "red wine vinegar", 
-                     "white wine vinegar", "balsamic vinegar", "apple cider vinegar"],
-            .dairy: ["milk", "cream", "yogurt", "butter", "mozzarella", "cheese", "egg", "eggs"],
-            .beverages: ["water", "juice", "soda", "drink", "beverage", "wine", "beer", "liquor", "spirits"]
-        ]
-        
-        let lowercasedName = name.lowercased()
-        
-        // Check if the ingredient name contains any category-specific keywords
-        for (category, keywords) in categoryKeywords {
-            for keyword in keywords {
-                if lowercasedName.contains(keyword) {
-                    return category
-                }
-            }
-        }
-        
-        // If no matching keywords found, return the original category
-        return originalCategory
-    }
-    
-    private func cleanIngredientName(_ name: String) -> String {
-        // List of preparation words to remove
-        let preparationWords = [
-            "fresh", "mild", "uncooked", "pitted", "drained", "chopped", "sliced", "diced", "minced",
-            "crushed", "whole", "extra", "pure",
-            "organic", "natural", "raw", "cooked", "roasted", "toasted",
-            "frozen", "thawed", "warm", "cold", "hot", "softened", "melted", "chilled",
-            "room temperature", "room temp", "soft", "hard", "ripe", "unripe",
-            "large", "small", "medium", "jumbo", "baby", "mini", "regular", "premium",
-            "quality", "best", "finest", "select", "choice", "grade", "a", "b", "c",
-            "premium", "gourmet", "artisanal", "handmade", "homemade", "store-bought",
-            "imported", "domestic", "local", "regional", "seasonal", "year-round",
-            "ripe", "unripe", "overripe", "underripe", "perfect", "ideal", "optimal"
-        ]
-        
-        var cleanedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        
-        // Convert to lowercase for comparison
-        let lowercasedName = cleanedName.lowercased()
-        
-        // Remove preparation words from the beginning
-        for word in preparationWords {
-            let wordPattern = "^\\s*\(word)\\s+"
-            if let range = lowercasedName.range(of: wordPattern, options: .regularExpression) {
-                cleanedName = String(cleanedName[range.upperBound...])
-                break
-            }
-        }
-        
-        // Remove preparation words from the end
-        for word in preparationWords {
-            let wordPattern = "\\s+\(word)\\s*$"
-            if let range = lowercasedName.range(of: wordPattern, options: .regularExpression) {
-                cleanedName = String(cleanedName[..<range.lowerBound])
-                break
-            }
-        }
-        
-        // Clean up any extra whitespace
-        cleanedName = cleanedName.trimmingCharacters(in: .whitespacesAndNewlines)
-        
-        // Ensure we don't return an empty string
-        if cleanedName.isEmpty {
-            return name // Return original if cleaning resulted in empty string
-        }
-        
-        return cleanedName
     }
     
     private func convertToStandardUnits(amount: Double, unit: String) -> (amount: Double, unit: String) {
@@ -947,8 +909,11 @@ class LLMService: ObservableObject {
     }
     
     private func extractIngredientSection(from content: String) -> String {
+        print("🔍 Starting ingredient extraction from content length: \(content.count)")
+        
         // Simple approach: Let the LLM handle the filtering
         // Just return the content and let the LLM figure out what's food vs code
+        print("✅ Using simple approach - letting LLM handle filtering")
         return content
     }
     
@@ -1354,7 +1319,7 @@ class LLMService: ObservableObject {
             "\\b\\d+\\s*\\([^)]*\\)\\b", // Patterns like "2 ounces (55 ml)"
             "\\b\\d+\\s*to\\s*\\d+\\s*(cup|cups|tablespoon|tablespoons|teaspoon|teaspoons)\\b", // Ranges like "2 to 3 tablespoons"
             "\\b\\d+\\s*(small|large|medium)\\b", // Patterns like "3 small red bell peppers"
-            "\\b\\d+\\s*(cloves|slices|pieces)\\b", // Patterns like "5 medium cloves garlic"
+            "\\b\\d+\\s*(cloves|slices)\\b", // Patterns like "5 medium cloves garlic"
             "\\b\\d+\\s*\\+\\s*\\d+\\s*(tablespoon|teaspoon|cup)", // Patterns like "2 + 2 teaspoons"
             "\\b\\d+\\s*\\/\\s*\\d+\\s*(cup|tablespoon|teaspoon)", // Patterns like "1/2 cup"
             "\\b\\d+\\s*\\-\\s*\\d+\\s*(cup|tablespoon|teaspoon)", // Patterns like "2-3 tablespoons"
@@ -2107,6 +2072,146 @@ class LLMService: ObservableObject {
         
         print("🔄 Converted fractions to decimals in JSON")
         return result
+    }
+    
+    private func applyTitleCase(to text: String) -> String {
+        // Words that should remain lowercase (unless they're the first or last word)
+        let lowercaseWords: Set<String> = [
+            "a", "an", "and", "as", "at", "but", "by", "for", "in", "of", "on", "or", "the", "to", "up", "with"
+        ]
+        
+        // Split the text into words
+        let words = text.components(separatedBy: .whitespaces)
+        var titleCaseWords: [String] = []
+        
+        for (index, word) in words.enumerated() {
+            let trimmedWord = word.trimmingCharacters(in: .whitespaces)
+            if trimmedWord.isEmpty { continue }
+            
+            // Capitalize the word if it's the first word, last word, or not in the lowercase list
+            let shouldCapitalize = index == 0 || 
+                                 index == words.count - 1 || 
+                                 !lowercaseWords.contains(trimmedWord.lowercased())
+            
+            if shouldCapitalize {
+                // Capitalize the first letter and keep the rest as is
+                let firstLetter = trimmedWord.prefix(1).uppercased()
+                let restOfWord = trimmedWord.dropFirst().lowercased()
+                titleCaseWords.append(String(firstLetter) + String(restOfWord))
+            } else {
+                // Keep the word in lowercase
+                titleCaseWords.append(trimmedWord.lowercased())
+            }
+        }
+        
+        return titleCaseWords.joined(separator: " ")
+    }
+    
+    private func cleanUnit(_ unit: String) -> String {
+        // List of valid measurement units
+        let validUnits = [
+            "cup", "cups", "tablespoon", "tablespoons", "teaspoon", "teaspoons",
+            "ounce", "ounces", "pound", "pounds", "gram", "grams", "kilogram", "kilograms",
+            "ml", "l", "g", "kg", "oz", "lb", "tbsp", "tsp",
+            "slice", "slices",
+            "bottle", "bottles",
+            "package", "packages", "bunch", "bunches", "head", "heads",
+            "count"
+        ]
+        
+        // List of descriptive words to remove from units
+        let descriptiveWords = [
+            "raw", "ripe", "fresh", "medium", "large", "small", "extra", "jumbo", "baby", "mini",
+
+            "organic", "natural", "premium", "quality", "best", "finest", "select", "choice",
+            "imported", "domestic", "local", "regional", "seasonal", "year-round",
+            "virgin", "olive", "oil", "basil", "tomatoes", "cheese", "honey", "vegetables",
+            "clove", "cloves", "can", "cans", "jar", "jars", "bag", "bags"
+        ]
+        
+        var cleanedUnit = unit.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // Remove descriptive words from the unit
+        for word in descriptiveWords {
+            let wordPattern = "\\b\(word)\\b"
+            if let regex = try? NSRegularExpression(pattern: wordPattern, options: [.caseInsensitive]) {
+                cleanedUnit = regex.stringByReplacingMatches(in: cleanedUnit, options: [], range: NSRange(cleanedUnit.startIndex..., in: cleanedUnit), withTemplate: "")
+            }
+        }
+        
+        // Clean up extra whitespace
+        cleanedUnit = cleanedUnit.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // Check if the cleaned unit is a valid measurement unit
+        let lowercasedCleanedUnit = cleanedUnit.lowercased()
+        let isValidUnit = validUnits.contains(lowercasedCleanedUnit)
+        
+        // If the unit is empty or not a valid measurement unit, default to "piece"
+        if cleanedUnit.isEmpty || !isValidUnit {
+            return "piece"
+        }
+        
+        return cleanedUnit
+    }
+    
+    private func applySingularPluralLogic(_ unit: String, amount: Double?) -> String {
+        let lowercasedUnit = unit.lowercased()
+        
+        // If amount is 1, use singular form
+        if let amount = amount, amount == 1.0 {
+            let singularMappings: [String: String] = [
+                "cups": "cup",
+                "tablespoons": "tablespoon", 
+                "teaspoons": "teaspoon",
+                "ounces": "ounce",
+                "pounds": "pound",
+                "grams": "gram",
+                "kilograms": "kilogram",
+                "pints": "pint",
+                "quarts": "quart",
+                "gallons": "gallon",
+                "milliliters": "milliliter",
+                "liters": "liter",
+                "cloves": "clove",
+                "slices": "slice",
+                "cans": "can",
+                "jars": "jar",
+                "bottles": "bottle",
+                "packages": "package",
+                "bags": "bag",
+                "bunches": "bunch",
+                "heads": "head"
+            ]
+            
+            return singularMappings[lowercasedUnit] ?? unit
+        }
+        
+        // For amounts > 1, use plural form (or keep as is if already plural)
+        let pluralMappings: [String: String] = [
+            "cup": "cups",
+            "tablespoon": "tablespoons",
+            "teaspoon": "teaspoons", 
+            "ounce": "ounces",
+            "pound": "pounds",
+            "gram": "grams",
+            "kilogram": "kilograms",
+            "pint": "pints",
+            "quart": "quarts",
+            "gallon": "gallons",
+            "milliliter": "milliliters",
+            "liter": "liters",
+            "clove": "cloves",
+            "slice": "slices",
+            "can": "cans",
+            "jar": "jars",
+            "bottle": "bottles",
+            "package": "packages",
+            "bag": "bags",
+            "bunch": "bunches",
+            "head": "heads"
+        ]
+        
+        return pluralMappings[lowercasedUnit] ?? unit
     }
 }
 
