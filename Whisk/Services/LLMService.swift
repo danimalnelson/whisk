@@ -1,58 +1,32 @@
 import Foundation
 
 class LLMService: ObservableObject {
-    private let apiKey: String
-    private let baseURL: String
-    private let model: String
+    private let baseURL = "https://whisk-server-97zqsyqbp-dannelson.vercel.app/api/call-openai"
     
-    init(apiKey: String = "", useOpenAI: Bool = true) {
-        self.apiKey = apiKey
-        if useOpenAI {
-            self.baseURL = "https://api.openai.com/v1/chat/completions"
-            self.model = "gpt-3.5-turbo-instruct" // Faster option
-        } else {
-            self.baseURL = "https://api.anthropic.com/v1/messages"
-            self.model = "claude-3-haiku-20240307" // Cheaper option
-        }
+    init() {
     }
     
     func parseRecipe(from url: String) async throws -> RecipeParsingResult {
-        print("🔍 Starting recipe parsing for URL: \(url)")
-        var timings: [String: Double] = [:]
+        print("⏱️ === Recipe Parsing Start ===")
         let totalStartTime = CFAbsoluteTimeGetCurrent()
         
-        // First, fetch the webpage content
-        let fetchStartTime = CFAbsoluteTimeGetCurrent()
+        // Fetch and process webpage
         let webpageContent = try await fetchWebpageContent(from: url)
-        timings["fetch"] = CFAbsoluteTimeGetCurrent() - fetchStartTime
-        print("⏱️ Fetch time: \(String(format: "%.2f", timings["fetch"]!)) seconds")
-        
-        // Extract just the ingredient section
-        let extractStartTime = CFAbsoluteTimeGetCurrent()
         let ingredientSection = extractIngredientSection(from: webpageContent)
-        timings["extract"] = CFAbsoluteTimeGetCurrent() - extractStartTime
-        print("⏱️ Extract time: \(String(format: "%.2f", timings["extract"]!)) seconds")
-        
-        // Create the prompt for the LLM using only the ingredient section
-        let promptStartTime = CFAbsoluteTimeGetCurrent()
         let prompt = createRecipeParsingPrompt(ingredientContent: ingredientSection)
-        timings["prompt"] = CFAbsoluteTimeGetCurrent() - promptStartTime
-        print("⏱️ Prompt creation time: \(String(format: "%.2f", timings["prompt"]!)) seconds")
         
-        // Call the LLM
+        // Call LLM
         let llmStartTime = CFAbsoluteTimeGetCurrent()
         let response = try await callLLM(prompt: prompt)
-        timings["llm"] = CFAbsoluteTimeGetCurrent() - llmStartTime
-        print("⏱️ LLM call time: \(String(format: "%.2f", timings["llm"]!)) seconds")
+        let llmTime = CFAbsoluteTimeGetCurrent() - llmStartTime
+        print("⏱️ LLM processing: \(String(format: "%.2f", llmTime))s")
         
-        // Parse the LLM response and verify ingredients
-        let parseStartTime = CFAbsoluteTimeGetCurrent()
+        // Parse response
         let result = parseLLMResponse(response, originalURL: url, originalContent: webpageContent)
-        timings["parse"] = CFAbsoluteTimeGetCurrent() - parseStartTime
-        print("⏱️ Parse and verify time: \(String(format: "%.2f", timings["parse"]!)) seconds")
         
         let totalTime = CFAbsoluteTimeGetCurrent() - totalStartTime
-        print("⏱️ Total processing time: \(String(format: "%.2f", totalTime)) seconds")
+        print("⏱️ Total time: \(String(format: "%.2f", totalTime))s")
+        print("⏱️ === Recipe Parsing End ===")
         
         return result
     }
@@ -81,11 +55,13 @@ class LLMService: ObservableObject {
         }
         
         // ULTRA-AGGRESSIVE: Extract only ingredient lines
+        let startTime = CFAbsoluteTimeGetCurrent()
         var textContent = ""
         
         // Extract only lines that contain measurements
         let lines = htmlString.components(separatedBy: .newlines)
         var ingredientLines: [String] = []
+        var timings: [String: Double] = [:]
         
         for line in lines {
             let cleanLine = line
@@ -119,6 +95,8 @@ class LLMService: ObservableObject {
         }
         
         textContent = ingredientLines.joined(separator: "\n")
+        timings["lineFiltering"] = CFAbsoluteTimeGetCurrent() - startTime
+        print("⏱️ Line filtering time: \(String(format: "%.2f", timings["lineFiltering"]!)) seconds")
         print("📋 Filtered to \(ingredientLines.count) ingredient lines")
         
         // HARD LIMIT: Truncate to 1000 characters max
@@ -128,6 +106,7 @@ class LLMService: ObservableObject {
         }
         
         // First, try to extract ingredients from HTML list elements
+        let listStartTime = CFAbsoluteTimeGetCurrent()
         let listPatterns = [
             #"<ul[^>]*>(.*?)</ul>"#,
             #"<ol[^>]*>(.*?)</ol>"#
@@ -182,11 +161,15 @@ class LLMService: ObservableObject {
         }
         
         // If we found ingredients in lists, use them; otherwise look for ingredient section
+        timings["listParsing"] = CFAbsoluteTimeGetCurrent() - listStartTime
+        print("⏱️ List parsing time: \(String(format: "%.2f", timings["listParsing"]!)) seconds")
+        
         if !extractedIngredients.isEmpty {
             textContent = extractedIngredients.joined(separator: "\n")
             print("📋 Found \(extractedIngredients.count) ingredients in HTML lists")
         } else {
             // Fallback: Look for ingredient section specifically
+            let sectionStartTime = CFAbsoluteTimeGetCurrent()
             let ingredientKeywords = ["ingredients", "ingredient", "recipe details", "what you need", "you'll need"]
             let lines = textContent.components(separatedBy: .newlines)
             var ingredientSection: [String] = []
@@ -218,6 +201,9 @@ class LLMService: ObservableObject {
             }
             
             // If we found an ingredient section, use it; otherwise use full content
+            timings["sectionParsing"] = CFAbsoluteTimeGetCurrent() - sectionStartTime
+            print("⏱️ Section parsing time: \(String(format: "%.2f", timings["sectionParsing"]!)) seconds")
+            
             if !ingredientSection.isEmpty {
                 textContent = ingredientSection.joined(separator: "\n")
                 print("📋 Found ingredient section with \(ingredientSection.count) lines")
@@ -243,8 +229,8 @@ class LLMService: ObservableObject {
 
         Rules:
         1. name: Remove prep words, keep essential descriptors
-        2. amount: Convert ALL fractions to decimals
-        3. unit: Standardize to full words
+        2. amount: Convert ALL fractions to decimals (default to 1 if no amount)
+        3. unit: Standardize to full words (default to "piece" if no unit)
         4. category: Must be one of [Produce, Meat & Seafood, Deli, Bakery, Frozen, Pantry, Dairy, Beverages]
 
         Examples showing exact expected output:
@@ -260,11 +246,14 @@ class LLMService: ObservableObject {
         "1 lb medium shrimp (31-40 count), peeled and deveined"
         {"name":"shrimp","amount":1,"unit":"pound","category":"Meat & Seafood"}
 
-        "8 slices Genoa salami, cut into strips"
-        {"name":"Genoa salami","amount":8,"unit":"slices","category":"Deli"}
+        "crispy shallots"
+        {"name":"crispy shallots","amount":1,"unit":"piece","category":"Produce"}
 
-        "1/4 cup extra virgin olive oil"
-        {"name":"olive oil","amount":0.25,"unit":"cup","category":"Pantry"}
+        "1/2 cup dry white wine"
+        {"name":"white wine","amount":0.5,"unit":"cup","category":"Beverages"}
+
+        "1/4 cup fresh lemon juice"
+        {"name":"lemon juice","amount":0.25,"unit":"cup","category":"Produce"}
 
         Now parse exactly as shown:
         \(ingredientContent)
@@ -272,18 +261,16 @@ class LLMService: ObservableObject {
     }
     
     private func callLLM(prompt: String) async throws -> String {
-        print("🤖 Calling Vercel API for OpenAI...")
+        let startTime = CFAbsoluteTimeGetCurrent()
         
-        guard let url = URL(string: "https://whisk-server-97zqsyqbp-dannelson.vercel.app/api/call-openai") else {
+        guard let url = URL(string: baseURL) else {
             throw LLMServiceError.invalidURL
         }
         
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
-        let requestBody = ["prompt": prompt]
-        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["prompt": prompt])
         
         let (data, response) = try await URLSession.shared.data(for: request)
         
@@ -293,7 +280,7 @@ class LLMService: ObservableObject {
         
         if httpResponse.statusCode != 200 {
             let errorString = String(data: data, encoding: .utf8) ?? "Unknown error"
-            print("❌ Vercel API Error: \(errorString)")
+            print("❌ API Error: \(errorString)")
             throw LLMServiceError.apiError
         }
         
@@ -304,22 +291,24 @@ class LLMService: ObservableObject {
             throw LLMServiceError.parsingError
         }
         
+        // Log server metrics if available
+        if let metrics = jsonResponse["metrics"] as? [String: Any] {
+            if let apiCallTime = metrics["apiCallTime"] as? Int {
+                print("⏱️ OpenAI API: \(apiCallTime)ms")
+            }
+            if let tokens = metrics["tokens"] as? Int {
+                print("📊 Tokens: \(tokens)")
+            }
+        }
+        
+        let totalTime = CFAbsoluteTimeGetCurrent() - startTime
+        print("⏱️ Total API time: \(String(format: "%.2f", totalTime))s")
+        
         return content
     }
     
     private func createRequestBody(prompt: String) -> [String: Any] {
-        // This would need to be adjusted based on whether using OpenAI or Anthropic
-        return [
-            "model": model,
-            "messages": [
-                [
-                    "role": "user",
-                    "content": prompt
-                ]
-            ],
-            "max_tokens": 2000,
-            "temperature": 0.1
-        ]
+        return ["prompt": prompt]
     }
     
     private func parseLLMResponse(_ response: String, originalURL: String, originalContent: String = "") -> RecipeParsingResult {
