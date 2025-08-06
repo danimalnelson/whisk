@@ -716,83 +716,7 @@ class LLMService: ObservableObject {
     
     private func standardizeUnit(_ unit: String) -> String {
         let lowercasedUnit = unit.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-        
-        let unitMappings: [String: String] = [
-            // Weight units
-            "oz": "ounces",
-            "ounce": "ounces",
-            "ounces": "ounces",
-            "lb": "pounds",
-            "lbs": "pounds",
-            "pound": "pounds",
-            "pounds": "pounds",
-            "g": "grams",
-            "gram": "grams",
-            "grams": "grams",
-            "kg": "kilograms",
-            "kilogram": "kilograms",
-            "kilograms": "kilograms",
-            
-            // Volume units
-            "tbsp": "tablespoons",
-            "tbs": "tablespoons",
-            "tablespoon": "tablespoons",
-            "tablespoons": "tablespoons",
-            "tsp": "teaspoons",
-            "teaspoon": "teaspoons",
-            "teaspoons": "teaspoons",
-            "c": "cups",
-            "cup": "cups",
-            "cups": "cups",
-            "pt": "pints",
-            "pint": "pints",
-            "pints": "pints",
-            "qt": "quarts",
-            "quart": "quarts",
-            "quarts": "quarts",
-            "gal": "gallons",
-            "gallon": "gallons",
-            "gallons": "gallons",
-            "ml": "milliliters",
-            "milliliter": "milliliters",
-            "milliliters": "milliliters",
-            "l": "liters",
-            "liter": "liters",
-            "liters": "liters",
-            
-            // Count units
-            "clove": "cloves",
-            "cloves": "cloves",
-            "count": "count",
-            "slice": "slices",
-            "slices": "slices",
-            "piece": "pieces",
-            "pieces": "pieces",
-            "can": "cans",
-            "cans": "cans",
-            "jar": "jars",
-            "jars": "jars",
-            "bottle": "bottles",
-            "bottles": "bottles",
-            "package": "packages",
-            "packages": "packages",
-            "bag": "bags",
-            "bags": "bags",
-            "bunch": "bunches",
-            "bunches": "bunches",
-            "head": "heads",
-            "heads": "heads",
-            
-            // Size units
-            "small": "small",
-            "medium": "medium",
-            "large": "large",
-            "extra large": "extra large",
-            "xl": "extra large"
-        ]
-        
-        let standardizedUnit = unitMappings[lowercasedUnit] ?? lowercasedUnit
-        return standardizedUnit
+        return unitMappings[lowercasedUnit] ?? lowercasedUnit
     }
     
     // MARK: - Centralized Ingredient Processing
@@ -801,17 +725,44 @@ class LLMService: ObservableObject {
         // 1. Clean and standardize the ingredient name
         let cleanedName = cleanIngredientName(name)
         
-        // 2. Process and standardize the amount
-        let standardizedAmount = processAndStandardizeAmount(amount)
+        // 2. Process and standardize the amount and unit
+        let (standardizedAmount, standardizedUnit) = processAmountAndUnit(name: cleanedName, amount: amount, unit: unit)
         
-        // 3. Process and standardize the unit
-        let standardizedUnit = processAndStandardizeUnit(unit)
-        
-        // 4. Validate and potentially adjust category based on cleaned name
+        // 3. Validate and potentially adjust category based on cleaned name
         let validatedCategory = validateAndAdjustCategory(cleanedName, originalCategory: category)
         
-        // 5. Create the standardized ingredient
+        // 4. Create the standardized ingredient
         return Ingredient(name: cleanedName, amount: standardizedAmount, unit: standardizedUnit, category: validatedCategory)
+    }
+    
+    private func processAmountAndUnit(name: String, amount: Any?, unit: Any?) -> (amount: Double, unit: String) {
+        // Check if this is an individual fruit/vegetable that should use piece units
+        let lowercasedName = name.lowercased()
+        let individualItems: Set<String> = [
+            "peppers", "bell peppers", "red bell peppers", "green bell peppers", "yellow bell peppers",
+            "tomatoes", "grape tomatoes", "cherry tomatoes", "roma tomatoes",
+            "avocados", "hass avocados", "bananas", "peaches", "oranges", "limes", "lemons",
+            "apples", "pears", "plums", "nectarines", "mangoes", "pineapples",
+            "cucumbers", "zucchinis", "eggplants", "squashes", "pumpkins"
+        ]
+        
+        let isIndividualItem = individualItems.contains { lowercasedName.contains($0) }
+        
+        if isIndividualItem {
+            // For individual items, try to extract quantity from the original description
+            if let amountString = amount as? String {
+                let numberPattern = "\\b(\\d+)\\b"
+                if let range = amountString.range(of: numberPattern, options: .regularExpression),
+                   let number = Double(String(amountString[range])) {
+                    return (amount: number, unit: "piece")
+                }
+            }
+        }
+        
+        // Default processing
+        let standardizedAmount = processAndStandardizeAmount(amount)
+        let standardizedUnit = processAndStandardizeUnit(unit)
+        return (amount: standardizedAmount, unit: standardizedUnit)
     }
     
     private func processAndStandardizeAmount(_ amount: Any?) -> Double {
@@ -821,6 +772,21 @@ class LLMService: ObservableObject {
             processedAmount = amountValue
         } else if let amountValue = amount as? Int {
             processedAmount = Double(amountValue)
+        } else if let amountString = amount as? String {
+            // Try to parse the string as a number
+            if let parsedAmount = Double(amountString) {
+                processedAmount = parsedAmount
+            } else {
+                // Check if it contains a number (e.g., "3 small red bell peppers")
+                let numberPattern = "\\b(\\d+)\\b"
+                if let range = amountString.range(of: numberPattern, options: .regularExpression),
+                   let number = Double(String(amountString[range])) {
+                    processedAmount = number
+                } else {
+                    // If it's not a number, default to 1
+                    processedAmount = 1.0
+                }
+            }
         } else {
             // Default to 1 if no amount specified
             processedAmount = 1.0
@@ -840,29 +806,48 @@ class LLMService: ObservableObject {
             processedUnit = "piece"
         }
         
+        // Handle special cases where we want to extract quantity from description
+        let lowercasedUnit = processedUnit.lowercased()
+        
+        // Extract number from descriptions like "3 small red bell peppers"
+        if lowercasedUnit.contains("small") || lowercasedUnit.contains("medium") || lowercasedUnit.contains("large") {
+            // This will be handled in the amount processing
+            return "piece"
+        }
+        
+        // Handle "for greasing" or similar non-measurable units
+        if lowercasedUnit.contains("greasing") || lowercasedUnit.contains("garnish") || lowercasedUnit.contains("to taste") {
+            return ""
+        }
+        
+        // Handle individual fruit/vegetable quantities
+        let individualItems: Set<String> = [
+            "peppers", "bell peppers", "red bell peppers", "green bell peppers", "yellow bell peppers",
+            "tomatoes", "grape tomatoes", "cherry tomatoes", "roma tomatoes",
+            "avocados", "hass avocados", "bananas", "peaches", "oranges", "limes", "lemons",
+            "apples", "pears", "plums", "nectarines", "mangoes", "pineapples",
+            "cucumbers", "zucchinis", "eggplants", "squashes", "pumpkins"
+        ]
+        
+        for item in individualItems {
+            if lowercasedUnit.contains(item.lowercased()) {
+                return "piece"
+            }
+        }
+        
         // Standardize the unit using existing logic
         return standardizeUnit(processedUnit)
     }
     
     private func validateAndAdjustCategory(_ name: String, originalCategory: GroceryCategory) -> GroceryCategory {
-        // Common ingredient keywords for each category
-        let categoryKeywords: [GroceryCategory: Set<String>] = [
-            .produce: ["tomato", "tomatoes", "onion", "onions", "garlic", "lettuce", "carrot", "carrots", 
-                      "pepper", "peppers", "cucumber", "basil", "herb", "herbs", "vegetable", "vegetables",
-                      "fruit", "fruits", "lemon", "lime", "orange", "apple", "banana", "berry", "berries"],
-            .meatAndSeafood: ["chicken", "beef", "pork", "fish", "salmon", "shrimp", "meat", "steak", 
-                             "turkey", "lamb", "seafood", "tuna", "cod", "sausage"],
-            .deli: ["ham", "salami", "prosciutto", "deli", "cold cut", "cold cuts", "genoa"],
-            .bakery: ["bread", "roll", "rolls", "bun", "buns", "bagel", "muffin", "cake", "pastry"],
-            .frozen: ["frozen", "ice cream", "ice", "freezer"],
-            .pantry: ["flour", "sugar", "salt", "spice", "spices", "oil", "vinegar", "sauce", "pasta", 
-                     "rice", "bean", "beans", "canned", "dry", "dried", "wine vinegar", "red wine vinegar", 
-                     "white wine vinegar", "balsamic vinegar", "apple cider vinegar"],
-            .dairy: ["milk", "cream", "yogurt", "butter", "mozzarella", "cheese", "egg", "eggs"],
-            .beverages: ["water", "juice", "soda", "drink", "beverage", "wine", "beer", "liquor", "spirits"]
-        ]
-        
         let lowercasedName = name.lowercased()
+        
+        // Check category overrides first (highest priority)
+        for (keyword, category) in categoryOverrides {
+            if lowercasedName.contains(keyword) {
+                return category
+            }
+        }
         
         // Check if the ingredient name contains any category-specific keywords
         for (category, keywords) in categoryKeywords {
@@ -878,27 +863,25 @@ class LLMService: ObservableObject {
     }
     
     private func cleanIngredientName(_ name: String) -> String {
-        // List of preparation words to remove
-        let preparationWords = [
-            "fresh", "mild", "uncooked", "pitted", "drained", "chopped", "sliced", "diced", "minced",
-            "crushed", "whole", "extra", "pure",
-            "organic", "natural", "raw", "cooked", "roasted", "toasted",
-            "frozen", "thawed", "warm", "cold", "hot", "softened", "melted", "chilled",
-            "room temperature", "room temp", "soft", "hard", "ripe", "unripe",
-            "large", "small", "medium", "jumbo", "baby", "mini", "regular", "premium",
-            "quality", "best", "finest", "select", "choice", "grade", "a", "b", "c",
-            "premium", "gourmet", "artisanal", "handmade", "homemade", "store-bought",
-            "imported", "domestic", "local", "regional", "seasonal", "year-round",
-            "ripe", "unripe", "overripe", "underripe", "perfect", "ideal", "optimal"
-        ]
         
         var cleanedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         
         // Convert to lowercase for comparison
         let lowercasedName = cleanedName.lowercased()
         
-        // Remove preparation words from the beginning
+        // Special handling for garlic cloves - preserve "cloves" in the name
+        if lowercasedName.contains("garlic") && lowercasedName.contains("cloves") {
+            // Keep "garlic cloves" as the ingredient name
+            return "garlic cloves"
+        }
+        
+        // Remove preparation words from the beginning (but preserve important descriptors)
         for word in preparationWords {
+            // Skip if this word should be preserved
+            if preservedWords.contains(word) {
+                continue
+            }
+            
             let wordPattern = "^\\s*\(word)\\s+"
             if let range = lowercasedName.range(of: wordPattern, options: .regularExpression) {
                 cleanedName = String(cleanedName[range.upperBound...])
@@ -906,8 +889,13 @@ class LLMService: ObservableObject {
             }
         }
         
-        // Remove preparation words from the end
+        // Remove preparation words from the end (but preserve important descriptors)
         for word in preparationWords {
+            // Skip if this word should be preserved
+            if preservedWords.contains(word) {
+                continue
+            }
+            
             let wordPattern = "\\s+\(word)\\s*$"
             if let range = lowercasedName.range(of: wordPattern, options: .regularExpression) {
                 cleanedName = String(cleanedName[..<range.lowerBound])
@@ -2108,6 +2096,97 @@ class LLMService: ObservableObject {
         print("🔄 Converted fractions to decimals in JSON")
         return result
     }
+    
+    // MARK: - Ingredient Processing Constants
+    
+    // Words that should be preserved in ingredient names (not removed during cleaning)
+    private let preservedWords: Set<String> = [
+        "salted", "unsalted", "sweet", "sour", "bitter", "spicy", "hot", "mild",
+        "extra", "virgin"
+    ]
+    
+    // Words that should be removed from ingredient names during cleaning
+    private let preparationWords: Set<String> = [
+        // Preparation/state words
+        "fresh", "mild", "uncooked", "pitted", "drained", "chopped", "sliced", "diced", "minced",
+        "crushed", "whole", "raw", "cooked", "roasted", "toasted", "frozen", "thawed", 
+        "warm", "cold", "hot", "softened", "melted", "chilled", "room temperature", "room temp",
+        "soft", "hard", "ripe", "unripe", "overripe", "underripe",
+        
+        // Size descriptors
+        "large", "small", "medium", "jumbo", "baby", "mini", "regular", "extra large", "xl",
+        
+        // Quality/premium descriptors (marketing terms)
+        "organic", "natural", "pure", "premium", "gourmet", "artisanal", "handmade", "homemade",
+        "store-bought", "imported", "domestic", "local", "regional", "seasonal", "year-round",
+        "quality", "best", "finest", "select", "choice", "grade", "a", "b", "c", "perfect", 
+        "ideal", "optimal", "authentic", "traditional", "classic", "original", "genuine",
+        "real", "true", "genuine", "premium", "superior", "excellent", "outstanding",
+        "top-quality", "high-quality", "premium-quality", "gourmet-quality", "restaurant-quality",
+        "farm-fresh", "farm-to-table", "sustainably-sourced", "ethically-sourced", "fair-trade",
+        "non-gmo", "gluten-free", "dairy-free", "vegan", "vegetarian", "kosher", "halal",
+        "all-natural", "100% natural", "pure", "unprocessed", "unrefined", "cold-pressed",
+        "extra-virgin", "virgin", "first-press", "single-origin", "small-batch", "craft",
+        "boutique", "specialty", "premium", "luxury", "deluxe", "premium-grade", "select-grade"
+    ]
+    
+    // Special category overrides (priority order)
+    private let categoryOverrides: [(String, GroceryCategory)] = [
+        ("vinegar", .pantry),
+        ("lemon juice", .produce)
+    ]
+    
+    // Category keywords for classification
+    private let categoryKeywords: [GroceryCategory: Set<String>] = [
+        .produce: ["tomato", "tomatoes", "onion", "onions", "garlic", "lettuce", "carrot", "carrots", 
+                  "pepper", "peppers", "cucumber", "basil", "herb", "herbs", "vegetable", "vegetables",
+                  "fruit", "fruits", "lemon", "lime", "orange", "apple", "banana", "berry", "berries"],
+        .meatAndSeafood: ["chicken", "beef", "pork", "fish", "salmon", "shrimp", "meat", "steak", 
+                         "turkey", "lamb", "seafood", "tuna", "cod", "sausage"],
+        .deli: ["ham", "salami", "prosciutto", "deli", "cold cut", "cold cuts", "genoa"],
+        .bakery: ["bread", "roll", "rolls", "bun", "buns", "bagel", "muffin", "cake", "pastry"],
+        .frozen: ["frozen", "ice cream", "ice", "freezer"],
+        .pantry: ["flour", "sugar", "salt", "spice", "spices", "oil", "sauce", "pasta", 
+                 "rice", "bean", "beans", "canned", "dry", "dried"],
+        .dairy: ["milk", "cream", "yogurt", "butter", "mozzarella", "cheese", "egg", "eggs"],
+        .beverages: ["water", "juice", "soda", "drink", "beverage", "wine", "beer", "liquor", "spirits"]
+    ]
+    
+    // Unit standardization mappings
+    private let unitMappings: [String: String] = [
+        // Weight units
+        "oz": "ounces", "ounce": "ounces", "ounces": "ounces",
+        "lb": "pounds", "lbs": "pounds", "pound": "pounds", "pounds": "pounds",
+        "g": "grams", "gram": "grams", "grams": "grams",
+        "kg": "kilograms", "kilogram": "kilograms", "kilograms": "kilograms",
+        
+        // Volume units
+        "tbsp": "tablespoons", "tbs": "tablespoons", "tablespoon": "tablespoons", "tablespoons": "tablespoons",
+        "tsp": "teaspoons", "teaspoon": "teaspoons", "teaspoons": "teaspoons",
+        "c": "cups", "cup": "cups", "cups": "cups",
+        "pt": "pints", "pint": "pints", "pints": "pints",
+        "qt": "quarts", "quart": "quarts", "quarts": "quarts",
+        "gal": "gallons", "gallon": "gallons", "gallons": "gallons",
+        "ml": "milliliters", "milliliter": "milliliters", "milliliters": "milliliters",
+        "l": "liters", "liter": "liters", "liters": "liters",
+        
+        // Count units
+        "clove": "cloves", "cloves": "cloves",
+        "count": "count",
+        "slice": "slices", "slices": "slices",
+        "piece": "pieces", "pieces": "pieces",
+        "can": "cans", "cans": "cans",
+        "jar": "jars", "jars": "jars",
+        "bottle": "bottles", "bottles": "bottles",
+        "package": "packages", "packages": "packages",
+        "bag": "bags", "bags": "bags",
+        "bunch": "bunches", "bunches": "bunches",
+        "head": "heads", "heads": "heads",
+        
+        // Size units
+        "small": "small", "medium": "medium", "large": "large",
+        "extra large": "extra large", "xl": "extra large"
+    ]
 }
 
 enum LLMServiceError: Error {

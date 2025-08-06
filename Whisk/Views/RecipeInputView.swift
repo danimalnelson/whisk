@@ -84,7 +84,7 @@ struct RecipeInputView: View {
                             Image(systemName: "wand.and.stars")
                         }
                         
-                        Text(isParsing ? "Parsing Recipes..." : "Parse Recipes")
+                        Text(isParsing ? "Creating list..." : "Create list")
                     }
                     .frame(maxWidth: .infinity)
                     .padding()

@@ -53,16 +53,33 @@ class DataManager: ObservableObject {
             return 
         }
         
-        // Merge ingredients with existing ones
-        for newIngredient in ingredients {
-            if let existingIndex = list.ingredients.firstIndex(where: { 
-                $0.name.lowercased() == newIngredient.name.lowercased() && 
-                $0.category == newIngredient.category 
-            }) {
-                // Combine amounts if same ingredient
-                list.ingredients[existingIndex].amount += newIngredient.amount
+        // Filter out water and other common household items
+        let filteredIngredients = ingredients.filter { ingredient in
+            let lowercasedName = ingredient.name.lowercased()
+            let excludedItems = ["water", "tap water", "filtered water", "distilled water"]
+            return !excludedItems.contains(lowercasedName)
+        }
+        
+        print("🛒 Filtered out \(ingredients.count - filteredIngredients.count) common household items")
+        
+        // Smart ingredient consolidation
+        for newIngredient in filteredIngredients {
+            if let existingIndex = findConsolidatableIngredient(newIngredient, in: list.ingredients) {
+                // Combine amounts with unit conversion if needed
+                let consolidatedAmount = consolidateAmounts(
+                    existing: list.ingredients[existingIndex].amount,
+                    existingUnit: list.ingredients[existingIndex].unit,
+                    new: newIngredient.amount,
+                    newUnit: newIngredient.unit
+                )
+                
+                list.ingredients[existingIndex].amount = consolidatedAmount.amount
+                list.ingredients[existingIndex].unit = consolidatedAmount.unit
+                
+                print("🛒 Consolidated: \(newIngredient.name) (\(newIngredient.amount) \(newIngredient.unit)) + existing → \(consolidatedAmount.amount) \(consolidatedAmount.unit)")
             } else {
                 list.ingredients.append(newIngredient)
+                print("🛒 Added new ingredient: \(newIngredient.name)")
             }
         }
         
@@ -80,17 +97,32 @@ class DataManager: ObservableObject {
         
         var updatedList = groceryLists[listIndex]
         
-        // Merge ingredients with existing ones
-        for newIngredient in ingredients {
+        // Filter out water and other common household items
+        let filteredIngredients = ingredients.filter { ingredient in
+            let lowercasedName = ingredient.name.lowercased()
+            let excludedItems = ["water", "tap water", "filtered water", "distilled water"]
+            return !excludedItems.contains(lowercasedName)
+        }
+        
+        print("🛒 Filtered out \(ingredients.count - filteredIngredients.count) common household items")
+        
+        // Smart ingredient consolidation
+        for newIngredient in filteredIngredients {
             print("🛒 Processing ingredient: \(newIngredient.name) - \(newIngredient.amount) \(newIngredient.unit)")
             
-            if let existingIndex = updatedList.ingredients.firstIndex(where: { 
-                $0.name.lowercased() == newIngredient.name.lowercased() && 
-                $0.category == newIngredient.category 
-            }) {
-                // Combine amounts if same ingredient
-                updatedList.ingredients[existingIndex].amount += newIngredient.amount
-                print("🛒 Combined with existing ingredient")
+            if let existingIndex = findConsolidatableIngredient(newIngredient, in: updatedList.ingredients) {
+                // Combine amounts with unit conversion if needed
+                let consolidatedAmount = consolidateAmounts(
+                    existing: updatedList.ingredients[existingIndex].amount,
+                    existingUnit: updatedList.ingredients[existingIndex].unit,
+                    new: newIngredient.amount,
+                    newUnit: newIngredient.unit
+                )
+                
+                updatedList.ingredients[existingIndex].amount = consolidatedAmount.amount
+                updatedList.ingredients[existingIndex].unit = consolidatedAmount.unit
+                
+                print("🛒 Consolidated: \(newIngredient.name) (\(newIngredient.amount) \(newIngredient.unit)) + existing → \(consolidatedAmount.amount) \(consolidatedAmount.unit)")
             } else {
                 updatedList.ingredients.append(newIngredient)
                 print("🛒 Added new ingredient")
@@ -143,6 +175,111 @@ class DataManager: ObservableObject {
         
         list.ingredients[index].isRemoved = false
         updateCurrentList(list)
+    }
+    
+    // MARK: - Ingredient Consolidation
+    
+    private func findConsolidatableIngredient(_ newIngredient: Ingredient, in existingIngredients: [Ingredient]) -> Int? {
+        let lowercasedNewName = newIngredient.name.lowercased()
+        
+        for (index, existing) in existingIngredients.enumerated() {
+            let lowercasedExistingName = existing.name.lowercased()
+            
+            // Exact name match (highest priority)
+            if lowercasedNewName == lowercasedExistingName && newIngredient.category == existing.category {
+                return index
+            }
+            
+            // Similar name match (e.g., "tomato" vs "tomatoes")
+            if areSimilarIngredients(lowercasedNewName, lowercasedExistingName) && newIngredient.category == existing.category {
+                return index
+            }
+        }
+        
+        return nil
+    }
+    
+    private func areSimilarIngredients(_ name1: String, _ name2: String) -> Bool {
+        // Handle plural/singular variations
+        let singular1 = name1.replacingOccurrences(of: "s$", with: "", options: .regularExpression)
+        let singular2 = name2.replacingOccurrences(of: "s$", with: "", options: .regularExpression)
+        
+        if singular1 == singular2 {
+            return true
+        }
+        
+        // Handle common variations
+        let variations: [String: Set<String>] = [
+            "tomato": ["tomatoes", "tomato"],
+            "onion": ["onions", "onion"],
+            "garlic": ["garlic", "garlic clove", "garlic cloves"],
+            "bell pepper": ["bell peppers", "pepper", "peppers"],
+            "potato": ["potatoes", "potato"],
+            "carrot": ["carrots", "carrot"]
+        ]
+        
+        for (base, variants) in variations {
+            if variants.contains(name1) && variants.contains(name2) {
+                return true
+            }
+        }
+        
+        return false
+    }
+    
+    private func consolidateAmounts(existing: Double, existingUnit: String, new: Double, newUnit: String) -> (amount: Double, unit: String) {
+        // If units are the same, simple addition
+        if existingUnit.lowercased() == newUnit.lowercased() {
+            return (existing + new, existingUnit)
+        }
+        
+        // Convert to common units for consolidation
+        let existingInGrams = convertToGrams(amount: existing, unit: existingUnit)
+        let newInGrams = convertToGrams(amount: new, unit: newUnit)
+        
+        if existingInGrams > 0 && newInGrams > 0 {
+            let totalGrams = existingInGrams + newInGrams
+            return convertFromGrams(grams: totalGrams, preferredUnit: existingUnit)
+        }
+        
+        // If conversion failed, keep existing unit and add amounts
+        return (existing + new, existingUnit)
+    }
+    
+    private func convertToGrams(amount: Double, unit: String) -> Double {
+        let lowercasedUnit = unit.lowercased()
+        
+        // Weight conversions
+        switch lowercasedUnit {
+        case "ounces", "ounce", "oz":
+            return amount * 28.35
+        case "pounds", "pound", "lb", "lbs":
+            return amount * 453.59
+        case "grams", "gram", "g":
+            return amount
+        case "kilograms", "kilogram", "kg":
+            return amount * 1000
+        default:
+            return 0 // Can't convert volume to weight
+        }
+    }
+    
+    private func convertFromGrams(grams: Double, preferredUnit: String) -> (amount: Double, unit: String) {
+        let lowercasedPreferred = preferredUnit.lowercased()
+        
+        // Convert back to preferred unit
+        switch lowercasedPreferred {
+        case "ounces", "ounce", "oz":
+            return (grams / 28.35, "ounces")
+        case "pounds", "pound", "lb", "lbs":
+            return (grams / 453.59, "pounds")
+        case "grams", "gram", "g":
+            return (grams, "grams")
+        case "kilograms", "kilogram", "kg":
+            return (grams / 1000, "kilograms")
+        default:
+            return (grams, "grams") // Default to grams
+        }
     }
     
     // MARK: - Data Persistence
