@@ -18,21 +18,43 @@ class LLMService: ObservableObject {
     
     func parseRecipe(from url: String) async throws -> RecipeParsingResult {
         print("🔍 Starting recipe parsing for URL: \(url)")
+        var timings: [String: Double] = [:]
+        let totalStartTime = CFAbsoluteTimeGetCurrent()
         
         // First, fetch the webpage content
+        let fetchStartTime = CFAbsoluteTimeGetCurrent()
         let webpageContent = try await fetchWebpageContent(from: url)
+        timings["fetch"] = CFAbsoluteTimeGetCurrent() - fetchStartTime
+        print("⏱️ Fetch time: \(String(format: "%.2f", timings["fetch"]!)) seconds")
         
         // Extract just the ingredient section
+        let extractStartTime = CFAbsoluteTimeGetCurrent()
         let ingredientSection = extractIngredientSection(from: webpageContent)
+        timings["extract"] = CFAbsoluteTimeGetCurrent() - extractStartTime
+        print("⏱️ Extract time: \(String(format: "%.2f", timings["extract"]!)) seconds")
         
         // Create the prompt for the LLM using only the ingredient section
+        let promptStartTime = CFAbsoluteTimeGetCurrent()
         let prompt = createRecipeParsingPrompt(ingredientContent: ingredientSection)
+        timings["prompt"] = CFAbsoluteTimeGetCurrent() - promptStartTime
+        print("⏱️ Prompt creation time: \(String(format: "%.2f", timings["prompt"]!)) seconds")
         
         // Call the LLM
+        let llmStartTime = CFAbsoluteTimeGetCurrent()
         let response = try await callLLM(prompt: prompt)
+        timings["llm"] = CFAbsoluteTimeGetCurrent() - llmStartTime
+        print("⏱️ LLM call time: \(String(format: "%.2f", timings["llm"]!)) seconds")
         
-        // Parse the LLM response
-        return parseLLMResponse(response, originalURL: url, originalContent: webpageContent)
+        // Parse the LLM response and verify ingredients
+        let parseStartTime = CFAbsoluteTimeGetCurrent()
+        let result = parseLLMResponse(response, originalURL: url, originalContent: webpageContent)
+        timings["parse"] = CFAbsoluteTimeGetCurrent() - parseStartTime
+        print("⏱️ Parse and verify time: \(String(format: "%.2f", timings["parse"]!)) seconds")
+        
+        let totalTime = CFAbsoluteTimeGetCurrent() - totalStartTime
+        print("⏱️ Total processing time: \(String(format: "%.2f", totalTime)) seconds")
+        
+        return result
     }
     
     private func fetchWebpageContent(from url: String) async throws -> String {
@@ -217,8 +239,34 @@ class LLMService: ObservableObject {
     
     private func createRecipeParsingPrompt(ingredientContent: String) -> String {
         return """
-        Extract ingredients. JSON: {"recipeName": "name", "ingredients": [{"name": "ingredient", "amount": 1, "unit": "unit", "category": "category"}]}
-        Categories: Produce, Meat & Seafood, Deli, Bakery, Frozen, Pantry, Dairy, Beverages
+        Parse ingredients into {"ingredients":[{"name":X,"amount":Y,"unit":Z,"category":C}]}
+
+        Rules:
+        1. name: Remove prep words, keep essential descriptors
+        2. amount: Convert ALL fractions to decimals
+        3. unit: Standardize to full words
+        4. category: Must be one of [Produce, Meat & Seafood, Deli, Bakery, Frozen, Pantry, Dairy, Beverages]
+
+        Examples showing exact expected output:
+        "2 1/2 tbsp finely chopped fresh basil"
+        {"name":"basil","amount":2.5,"unit":"tablespoons","category":"Produce"}
+
+        "1 (14.5 oz) can diced tomatoes, drained"
+        {"name":"tomatoes","amount":14.5,"unit":"ounces","category":"Pantry"}
+
+        "3 large cloves garlic, minced"
+        {"name":"garlic","amount":3,"unit":"large cloves","category":"Produce"}
+
+        "1 lb medium shrimp (31-40 count), peeled and deveined"
+        {"name":"shrimp","amount":1,"unit":"pound","category":"Meat & Seafood"}
+
+        "8 slices Genoa salami, cut into strips"
+        {"name":"Genoa salami","amount":8,"unit":"slices","category":"Deli"}
+
+        "1/4 cup extra virgin olive oil"
+        {"name":"olive oil","amount":0.25,"unit":"cup","category":"Pantry"}
+
+        Now parse exactly as shown:
         \(ingredientContent)
         """
     }
@@ -361,32 +409,13 @@ class LLMService: ObservableObject {
                             continue
                         }
                         
-                        // Handle null/optional amount and unit values
-                        let amount: Double
-                        if let amountValue = ingredientDict["amount"] as? Double {
-                            amount = amountValue
-                        } else if let amountValue = ingredientDict["amount"] as? Int {
-                            amount = Double(amountValue)
-                        } else {
-                            // Default to 1 if no amount specified
-                            amount = 1.0
-                        }
-                        
-                        let unit: String
-                        if let unitValue = ingredientDict["unit"] as? String, !unitValue.isEmpty {
-                            unit = unitValue
-                        } else {
-                            // Default to "piece" if no unit specified
-                            unit = "piece"
-                        }
-                        
-                        // Standardize the amount (round to 2 decimal places for consistency)
-                        let standardizedAmount = round(amount * 100) / 100
-                        
-                        // Standardize the unit
-                        let standardizedUnit = standardizeUnit(unit)
-                        
-                        let ingredient = Ingredient(name: name, amount: standardizedAmount, unit: standardizedUnit, category: category)
+                        // Process and standardize the ingredient
+                        let ingredient = processAndStandardizeIngredient(
+                            name: name,
+                            amount: ingredientDict["amount"],
+                            unit: ingredientDict["unit"],
+                            category: category
+                        )
                         
                         // Validate ingredient quality
                         let validationResult = validateIngredient(ingredient, originalContent: "")
@@ -775,6 +804,137 @@ class LLMService: ObservableObject {
         
         let standardizedUnit = unitMappings[lowercasedUnit] ?? lowercasedUnit
         return standardizedUnit
+    }
+    
+    // MARK: - Centralized Ingredient Processing
+    
+    private func processAndStandardizeIngredient(name: String, amount: Any?, unit: Any?, category: GroceryCategory) -> Ingredient {
+        // 1. Clean and standardize the ingredient name
+        let cleanedName = cleanIngredientName(name)
+        
+        // 2. Process and standardize the amount
+        let standardizedAmount = processAndStandardizeAmount(amount)
+        
+        // 3. Process and standardize the unit
+        let standardizedUnit = processAndStandardizeUnit(unit)
+        
+        // 4. Validate and potentially adjust category based on cleaned name
+        let validatedCategory = validateAndAdjustCategory(cleanedName, originalCategory: category)
+        
+        // 5. Create the standardized ingredient
+        return Ingredient(name: cleanedName, amount: standardizedAmount, unit: standardizedUnit, category: validatedCategory)
+    }
+    
+    private func processAndStandardizeAmount(_ amount: Any?) -> Double {
+        // Handle null/optional amount values
+        let processedAmount: Double
+        if let amountValue = amount as? Double {
+            processedAmount = amountValue
+        } else if let amountValue = amount as? Int {
+            processedAmount = Double(amountValue)
+        } else {
+            // Default to 1 if no amount specified
+            processedAmount = 1.0
+        }
+        
+        // Standardize the amount (round to 2 decimal places for consistency)
+        return round(processedAmount * 100) / 100
+    }
+    
+    private func processAndStandardizeUnit(_ unit: Any?) -> String {
+        // Handle null/optional unit values
+        let processedUnit: String
+        if let unitValue = unit as? String, !unitValue.isEmpty {
+            processedUnit = unitValue
+        } else {
+            // Default to "piece" if no unit specified
+            processedUnit = "piece"
+        }
+        
+        // Standardize the unit using existing logic
+        return standardizeUnit(processedUnit)
+    }
+    
+    private func validateAndAdjustCategory(_ name: String, originalCategory: GroceryCategory) -> GroceryCategory {
+        // Common ingredient keywords for each category
+        let categoryKeywords: [GroceryCategory: Set<String>] = [
+            .produce: ["tomato", "tomatoes", "onion", "onions", "garlic", "lettuce", "carrot", "carrots", 
+                      "pepper", "peppers", "cucumber", "basil", "herb", "herbs", "vegetable", "vegetables",
+                      "fruit", "fruits", "lemon", "lime", "orange", "apple", "banana", "berry", "berries"],
+            .meatAndSeafood: ["chicken", "beef", "pork", "fish", "salmon", "shrimp", "meat", "steak", 
+                             "turkey", "lamb", "seafood", "tuna", "cod", "sausage"],
+            .deli: ["ham", "salami", "prosciutto", "deli", "cold cut", "cold cuts", "genoa"],
+            .bakery: ["bread", "roll", "rolls", "bun", "buns", "bagel", "muffin", "cake", "pastry"],
+            .frozen: ["frozen", "ice cream", "ice", "freezer"],
+            .pantry: ["flour", "sugar", "salt", "spice", "spices", "oil", "vinegar", "sauce", "pasta", 
+                     "rice", "bean", "beans", "canned", "dry", "dried", "wine vinegar", "red wine vinegar", 
+                     "white wine vinegar", "balsamic vinegar", "apple cider vinegar"],
+            .dairy: ["milk", "cream", "yogurt", "butter", "mozzarella", "cheese", "egg", "eggs"],
+            .beverages: ["water", "juice", "soda", "drink", "beverage", "wine", "beer", "liquor", "spirits"]
+        ]
+        
+        let lowercasedName = name.lowercased()
+        
+        // Check if the ingredient name contains any category-specific keywords
+        for (category, keywords) in categoryKeywords {
+            for keyword in keywords {
+                if lowercasedName.contains(keyword) {
+                    return category
+                }
+            }
+        }
+        
+        // If no matching keywords found, return the original category
+        return originalCategory
+    }
+    
+    private func cleanIngredientName(_ name: String) -> String {
+        // List of preparation words to remove
+        let preparationWords = [
+            "fresh", "mild", "uncooked", "pitted", "drained", "chopped", "sliced", "diced", "minced",
+            "crushed", "whole", "extra", "pure",
+            "organic", "natural", "raw", "cooked", "roasted", "toasted",
+            "frozen", "thawed", "warm", "cold", "hot", "softened", "melted", "chilled",
+            "room temperature", "room temp", "soft", "hard", "ripe", "unripe",
+            "large", "small", "medium", "jumbo", "baby", "mini", "regular", "premium",
+            "quality", "best", "finest", "select", "choice", "grade", "a", "b", "c",
+            "premium", "gourmet", "artisanal", "handmade", "homemade", "store-bought",
+            "imported", "domestic", "local", "regional", "seasonal", "year-round",
+            "ripe", "unripe", "overripe", "underripe", "perfect", "ideal", "optimal"
+        ]
+        
+        var cleanedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // Convert to lowercase for comparison
+        let lowercasedName = cleanedName.lowercased()
+        
+        // Remove preparation words from the beginning
+        for word in preparationWords {
+            let wordPattern = "^\\s*\(word)\\s+"
+            if let range = lowercasedName.range(of: wordPattern, options: .regularExpression) {
+                cleanedName = String(cleanedName[range.upperBound...])
+                break
+            }
+        }
+        
+        // Remove preparation words from the end
+        for word in preparationWords {
+            let wordPattern = "\\s+\(word)\\s*$"
+            if let range = lowercasedName.range(of: wordPattern, options: .regularExpression) {
+                cleanedName = String(cleanedName[..<range.lowerBound])
+                break
+            }
+        }
+        
+        // Clean up any extra whitespace
+        cleanedName = cleanedName.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // Ensure we don't return an empty string
+        if cleanedName.isEmpty {
+            return name // Return original if cleaning resulted in empty string
+        }
+        
+        return cleanedName
     }
     
     private func convertToStandardUnits(amount: Double, unit: String) -> (amount: Double, unit: String) {
