@@ -186,112 +186,38 @@ function extractRecipeTitle(htmlString) {
 function createLLMPrompt(ingredients, recipeTitle) {
   const recipeName = recipeTitle || "Recipe Name";
   
-  const prompt = `Parse ingredients into {"ingredients":[{"name":X,"amount":Y,"unit":Z,"category":C}]}
+  const prompt = `You are a recipe ingredient parser. Extract and standardize ingredients from the following list for the recipe: "${recipeName}".
+
+Return ONLY a valid JSON object with this exact structure:
+
+{
+  "recipeName": "${recipeName}",
+  "ingredients": [
+    {
+      "name": "ingredient name (cleaned)",
+      "amount": number,
+      "unit": "standardized unit",
+      "category": "Produce|Pantry|Dairy|Meat & Seafood|Deli|Beverages"
+    }
+  ]
+}
 
 Rules:
-1. name: The ingredient name should be what you would buy at the store (e.g., "black beans", "rosemary", "garlic cloves")
-2. amount: Convert ALL fractions to decimals (default to 1 if no amount)
-3. unit: PRESERVE the original quantity/unit from the recipe. Use singular form for 1, plural for >1. Only use weight measurements (ounces, pounds, grams) if that's what's explicitly stated in the recipe. For individual items, use "" (empty string) or omit unit entirely. NEVER use "pieces" as a unit - it's not a valid measurement.
-4. category: Must be one of [Produce, Meat & Seafood, Deli, Bakery, Frozen, Pantry, Dairy, Beverages]
-5. SKIP water ingredients - do not include them in the output
-6. ALL vinegars (white wine vinegar, red wine vinegar, apple cider vinegar, etc.) should be categorized as "Pantry"
-7. ALL wines (dry wine, rice wine, white wine, red wine, etc.) should be categorized as "Beverages"
-8. Lemon juice and lime juice should be categorized as "Pantry" (not Beverages)
-9. Banana pepper rings are jarred and should be categorized as "Pantry"
+- Convert all fractions to decimals (e.g., 1/2 → 0.5, 1 1/2 → 1.5)
+- Standardize units: cups, tablespoons, teaspoons, ounces, pounds, grams, etc.
+- Clean ingredient names by removing:
+  - Preparation methods: "halved", "diced", "chopped", "finely chopped", "coarsely chopped", "thinly sliced", "minced", "grated", "shredded", "torn into small pieces", "cut into strips", "julienned", "zested", "torn", "cubed", "mashed", "pureed", "whipped", "beaten", "crushed", "ground"
+  - Cooking states: "crispy", "toasted", "roasted", "grilled", "fried", "sautéed", "baked", "broiled", "steamed", "poached", "seared", "caramelized", "blanched", "boiled", "pickled", "smoked", "marinated", "candied", "melted", "softened", "thawed", "defrosted"
+  - Processing: "peeled", "deveined", "tail-on", "pitted", "seeded", "cored", "trimmed", "stemmed", "skinned", "deboned", "boneless", "skinless", "filleted", "rinsed", "washed", "patted dry", "squeezed", "pressed", "drained"
+  - State descriptors: "fresh", "raw", "uncooked", "cold", "warm", "hot", "divided", "separated", "reserved"
+  - Size descriptors: "large", "medium", "small" (unless it's part of the ingredient name like "large eggs")
+- Categorize ingredients appropriately
+- Only include actual ingredients, not cooking instructions
 
-Examples showing exact expected output:
-"3 small red bell peppers"
-{"name":"red bell peppers","amount":3,"unit":"","category":"Produce"}
+Ingredients to parse:
+${ingredients.join('\n')}
 
-"1 large shallot"
-{"name":"shallot","amount":1,"unit":"","category":"Produce"}
-
-"5 medium cloves garlic"
-{"name":"garlic cloves","amount":5,"unit":"","category":"Produce"}
-
-"2 cups grape tomatoes"
-{"name":"grape tomatoes","amount":2,"unit":"cups","category":"Produce"}
-
-"1 cup olive oil"
-{"name":"olive oil","amount":1,"unit":"cup","category":"Pantry"}
-
-"1/2 cup olive oil"
-{"name":"olive oil","amount":0.5,"unit":"cup","category":"Pantry"}
-
-"1 pound shrimp"
-{"name":"shrimp","amount":1,"unit":"pound","category":"Meat & Seafood"}
-
-"2 pounds shrimp"
-{"name":"shrimp","amount":2,"unit":"pounds","category":"Meat & Seafood"}
-
-"1 tablespoon olive oil"
-{"name":"olive oil","amount":1,"unit":"tablespoon","category":"Pantry"}
-
-"2 tablespoons olive oil"
-{"name":"olive oil","amount":2,"unit":"tablespoons","category":"Pantry"}
-
-"1/4 cup white wine vinegar"
-{"name":"white wine vinegar","amount":0.25,"unit":"cup","category":"Pantry"}
-
-"1/2 cup red wine vinegar"
-{"name":"red wine vinegar","amount":0.5,"unit":"cup","category":"Pantry"}
-
-"1/4 cup white wine vinegar"
-{"name":"white wine vinegar","amount":0.25,"unit":"cup","category":"Pantry"}
-
-"1/2 cup dry wine"
-{"name":"dry wine","amount":0.5,"unit":"cup","category":"Beverages"}
-
-"1/4 cup rice wine"
-{"name":"rice wine","amount":0.25,"unit":"cup","category":"Beverages"}
-
-"1/4 cup lemon juice"
-{"name":"lemon juice","amount":0.25,"unit":"cup","category":"Pantry"}
-
-"2 tablespoons lime juice"
-{"name":"lime juice","amount":2,"unit":"tablespoons","category":"Pantry"}
-
-"1/2 cup banana pepper rings"
-{"name":"banana pepper rings","amount":0.5,"unit":"cup","category":"Pantry"}
-
-"2 ripe medium avocados"
-{"name":"avocados","amount":2,"unit":"","category":"Produce"}
-
-"8 thin tomato slices"
-{"name":"tomatoes","amount":8,"unit":"","category":"Produce"}
-
-"12 raw onion rings"
-{"name":"onion","amount":12,"unit":"","category":"Produce"}
-
-"4 cemita buns"
-{"name":"cemita buns","amount":4,"unit":"","category":"Bakery"}
-
-"3 sprigs tarragon"
-{"name":"tarragon sprigs","amount":3,"unit":"","category":"Produce"}
-
-"5 medium cloves garlic"
-{"name":"garlic cloves","amount":5,"unit":"","category":"Produce"}
-
-"2 ripe medium avocados"
-{"name":"avocados","amount":2,"unit":"","category":"Produce"}
-
-"8 thin tomato slices"
-{"name":"tomatoes","amount":8,"unit":"","category":"Produce"}
-
-"12 raw onion rings"
-{"name":"onion","amount":12,"unit":"","category":"Produce"}
-
-"2 celery stalks"
-{"name":"celery stalks","amount":2,"unit":"","category":"Produce"}
-
-"4 papaya leaves"
-{"name":"papaya leaves","amount":4,"unit":"","category":"Produce"}
-
-"1/2 cup mayonnaise"
-{"name":"mayonnaise","amount":0.5,"unit":"cup","category":"Pantry"}
-
-Now parse exactly as shown:
-${ingredients.join('\n')}`;
+Return ONLY the JSON object, no other text.`;
 
   return prompt;
 }

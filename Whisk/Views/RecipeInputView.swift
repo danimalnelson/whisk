@@ -1,13 +1,19 @@
 import SwiftUI
 
 struct RecipeInputView: View {
-    @StateObject private var llmService = LLMService(apiKey: "YOUR_API_KEY") // TODO: Get from secure storage
+    @StateObject private var llmService = LLMService() // API key managed on Vercel
     @ObservedObject var dataManager: DataManager
+    let targetList: GroceryList? // Optional: if nil, use current list
+    @Environment(\.dismiss) private var dismiss
+    
+    init(dataManager: DataManager, targetList: GroceryList? = nil) {
+        self.dataManager = dataManager
+        self.targetList = targetList
+    }
     
     @State private var recipeURLs: [String] = []
     @State private var newURL: String = ""
     @State private var isParsing = false
-    @State private var parsingProgress: Double = 0.0
     @State private var parsingResults: [RecipeParsingResult] = []
     @State private var showError = false
     @State private var errorMessage = ""
@@ -23,7 +29,7 @@ struct RecipeInputView: View {
                     HStack {
                         TextField("Enter recipe URL", text: $newURL)
                             .textFieldStyle(RoundedBorderTextFieldStyle())
-                            .textInputAutocapitalization(.never)
+                            .autocapitalization(.none)
                             .disableAutocorrection(true)
                         
                         Button("Add") {
@@ -88,22 +94,16 @@ struct RecipeInputView: View {
                 }
                 .disabled(recipeURLs.isEmpty || isParsing)
                 .padding(.horizontal)
-                
-                // Progress Bar
-                if isParsing {
-                    VStack(spacing: 8) {
-                        ProgressView(value: parsingProgress)
-                            .progressViewStyle(LinearProgressViewStyle())
-                        
-                        Text("\(Int(parsingProgress * 100))% Complete")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    .padding(.horizontal)
-                }
             }
             .navigationTitle("Add Recipes")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+            }
             .alert("Error", isPresented: $showError) {
                 Button("OK") { }
             } message: {
@@ -113,72 +113,125 @@ struct RecipeInputView: View {
     }
     
     private func addURL() {
-        guard !newURL.isEmpty else { return }
-        
-        // Basic URL validation
-        if newURL.hasPrefix("http://") || newURL.hasPrefix("https://") {
-            recipeURLs.append(newURL)
+        let trimmedURL = newURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedURL.isEmpty && !recipeURLs.contains(trimmedURL) {
+            recipeURLs.append(trimmedURL)
             newURL = ""
-        } else {
-            errorMessage = "Please enter a valid URL starting with http:// or https://"
-            showError = true
         }
     }
     
     private func parseRecipes() {
         guard !recipeURLs.isEmpty else { return }
         
+        // Start timing the entire parsing process
+        let startTime = CFAbsoluteTimeGetCurrent()
+        print("⏱️ Starting recipe parsing timer...")
+        
         isParsing = true
-        parsingProgress = 0.0
-        parsingResults = []
+        parsingResults.removeAll()
         
         Task {
+            var successCount = 0
+            let totalCount = recipeURLs.count
+            var individualTimings: [Double] = []
+            
             for (index, url) in recipeURLs.enumerated() {
+                let recipeStartTime = CFAbsoluteTimeGetCurrent()
+                print("📋 Processing recipe \(index + 1)/\(totalCount): \(url)")
+                
                 do {
                     let result = try await llmService.parseRecipe(from: url)
-                    parsingResults.append(result)
+                    let recipeEndTime = CFAbsoluteTimeGetCurrent()
+                    let recipeDuration = recipeEndTime - recipeStartTime
+                    individualTimings.append(recipeDuration)
                     
-                    // Update progress
+                    print("⏱️ Recipe \(index + 1) completed in \(String(format: "%.2f", recipeDuration)) seconds")
+                    
                     await MainActor.run {
-                        parsingProgress = Double(index + 1) / Double(recipeURLs.count)
+                        parsingResults.append(result)
+                        
+                        if result.success {
+                            successCount += 1
+                            print("📋 Success count: \(successCount), Total count: \(totalCount)")
+                            
+                            // Add ingredients to the target list
+                            if result.recipe.ingredients.count > 0 {
+                                addIngredientsToGroceryList(result.recipe.ingredients)
+                            }
+                        } else {
+                            print("❌ Failed to parse recipe: \(result.error ?? "Unknown error")")
+                        }
                     }
                 } catch {
-                    let errorResult = RecipeParsingResult(
-                        recipe: Recipe(url: url),
-                        success: false,
-                        error: error.localizedDescription
-                    )
-                    parsingResults.append(errorResult)
+                    let recipeEndTime = CFAbsoluteTimeGetCurrent()
+                    let recipeDuration = recipeEndTime - recipeStartTime
+                    individualTimings.append(recipeDuration)
+                    
+                    print("⏱️ Recipe \(index + 1) failed after \(String(format: "%.2f", recipeDuration)) seconds")
+                    
+                    await MainActor.run {
+                        let errorResult = RecipeParsingResult(recipe: Recipe(url: url), success: false, error: error.localizedDescription)
+                        parsingResults.append(errorResult)
+                        print("❌ Error parsing recipe: \(error.localizedDescription)")
+                    }
                 }
             }
             
-            // Process results
             await MainActor.run {
-                processParsingResults()
+                let totalEndTime = CFAbsoluteTimeGetCurrent()
+                let totalDuration = totalEndTime - startTime
+                
+                // Log comprehensive timing statistics
+                print("⏱️ === PARSING TIMING SUMMARY ===")
+                print("⏱️ Total parsing time: \(String(format: "%.2f", totalDuration)) seconds")
+                print("⏱️ Number of recipes processed: \(totalCount)")
+                print("⏱️ Successful recipes: \(successCount)")
+                print("⏱️ Failed recipes: \(totalCount - successCount)")
+                
+                if !individualTimings.isEmpty {
+                    let averageTime = individualTimings.reduce(0, +) / Double(individualTimings.count)
+                    let minTime = individualTimings.min() ?? 0
+                    let maxTime = individualTimings.max() ?? 0
+                    
+                    print("⏱️ Average time per recipe: \(String(format: "%.2f", averageTime)) seconds")
+                    print("⏱️ Fastest recipe: \(String(format: "%.2f", minTime)) seconds")
+                    print("⏱️ Slowest recipe: \(String(format: "%.2f", maxTime)) seconds")
+                }
+                
+                // Log success/failure summary
+                if successCount == totalCount {
+                    print("✅ All recipes parsed successfully!")
+                } else if successCount > 0 {
+                    print("⚠️ \(successCount)/\(totalCount) recipes parsed successfully")
+                } else {
+                    print("❌ All recipes failed to parse")
+                }
+                
+                print("⏱️ === END TIMING SUMMARY ===")
+                
                 isParsing = false
+                
+                // Show summary
+                let successRate = Double(successCount) / Double(totalCount)
+                if successRate >= 0.5 {
+                    // Most recipes succeeded, dismiss
+                    dismiss()
+                } else {
+                    // Many failures, show error
+                    showError = true
+                    errorMessage = "Failed to parse \(totalCount - successCount) out of \(totalCount) recipes. Please check the URLs and try again."
+                }
             }
         }
     }
     
-    private func processParsingResults() {
-        var allIngredients: [Ingredient] = []
+    private func addIngredientsToGroceryList(_ ingredients: [Ingredient]) {
+        let targetGroceryList = targetList ?? dataManager.currentList
         
-        for result in parsingResults {
-            if result.success {
-                allIngredients.append(contentsOf: result.recipe.ingredients)
-            }
-        }
-        
-        // Add ingredients to current list
-        dataManager.addIngredientsToCurrentList(allIngredients)
-        
-        // Show results summary
-        let successCount = parsingResults.filter { $0.success }.count
-        let totalCount = parsingResults.count
-        
-        if successCount < totalCount {
-            errorMessage = "Successfully parsed \(successCount) of \(totalCount) recipes. Some recipes failed to parse."
-            showError = true
+        if let targetList = targetGroceryList {
+            dataManager.addIngredientsToList(ingredients, list: targetList)
+        } else {
+            dataManager.addIngredientsToCurrentList(ingredients)
         }
     }
 }
