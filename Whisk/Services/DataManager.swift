@@ -40,6 +40,18 @@ class DataManager: ObservableObject {
         saveData()
     }
     
+    func renameList(_ list: GroceryList, newName: String) {
+        if let index = groceryLists.firstIndex(where: { $0.id == list.id }) {
+            groceryLists[index].name = newName
+            if currentList?.id == list.id {
+                currentList = groceryLists[index]
+            }
+            saveData()
+        } else {
+            print("❌ Could not find list with ID: \(list.id) for renaming")
+        }
+    }
+    
     // MARK: - Ingredients Management
     
     func addIngredientsToCurrentList(_ ingredients: [Ingredient]) {

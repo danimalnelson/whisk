@@ -148,10 +148,55 @@ struct CreateListView: View {
     }
 }
 
+struct RenameListView: View {
+    @ObservedObject var dataManager: DataManager
+    let list: GroceryList?
+    @Binding var isPresented: Bool
+    @State private var listName = ""
+    
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 20) {
+                Text("Rename")
+                    .font(.title2)
+                    .fontWeight(.semibold)
+                
+                TextField("List Name", text: $listName)
+                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                    .padding(.horizontal)
+                
+                Button("Rename") {
+                    if !listName.isEmpty, let list = list {
+                        dataManager.renameList(list, newName: listName)
+                        isPresented = false
+                    }
+                }
+                .disabled(listName.isEmpty)
+                .buttonStyle(.borderedProminent)
+                
+                Spacer()
+            }
+            .padding()
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Cancel") {
+                        isPresented = false
+                    }
+                }
+            }
+            .onAppear {
+                listName = list?.name ?? ""
+            }
+        }
+    }
+}
+
 struct GroceryListDetailView: View {
     @ObservedObject var dataManager: DataManager
     let list: GroceryList
     @State private var showingRecipeInput = false
+    @State private var showingRenameList = false
     @Environment(\.dismiss) private var dismiss
     
     // Get the current version of this list from the DataManager
@@ -281,9 +326,43 @@ struct GroceryListDetailView: View {
                     .foregroundColor(.blue)
                 }
             }
+            
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Menu {
+                    Button(action: {
+                        showingRenameList = true
+                    }) {
+                        HStack {
+                            Text("Rename")
+                            Spacer()
+                            Image(systemName: "pencil")
+                        }
+                    }
+                    
+                    Button(role: .destructive, action: {
+                        if let currentList = currentList {
+                            dataManager.deleteList(currentList)
+                            dismiss()
+                        }
+                    }) {
+                        HStack {
+                            Text("Delete")
+                            Spacer()
+                            Image(systemName: "trash")
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 20))
+                        .foregroundColor(.blue)
+                }
+            }
         }
         .sheet(isPresented: $showingRecipeInput) {
             RecipeInputView(dataManager: dataManager, targetList: currentList)
+        }
+        .sheet(isPresented: $showingRenameList) {
+            RenameListView(dataManager: dataManager, list: currentList, isPresented: $showingRenameList)
         }
     }
 }
