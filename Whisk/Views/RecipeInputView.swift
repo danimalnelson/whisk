@@ -125,27 +125,47 @@ struct RecipeInputView: View {
         
         // Start timing the entire parsing process
         let startTime = CFAbsoluteTimeGetCurrent()
-        print("⏱️ Starting recipe parsing timer...")
+        print("⏱️ Starting parallel recipe parsing timer...")
         
         isParsing = true
         parsingResults.removeAll()
         
         Task {
-            var successCount = 0
             let totalCount = recipeURLs.count
             var individualTimings: [Double] = []
+            var successCount = 0
             
-            for (index, url) in recipeURLs.enumerated() {
-                let recipeStartTime = CFAbsoluteTimeGetCurrent()
-                print("📋 Processing recipe \(index + 1)/\(totalCount): \(url)")
+            // Use TaskGroup to process recipes in parallel
+            await withTaskGroup(of: (Int, RecipeParsingResult, Double).self) { group in
+                // Add all recipes to the task group
+                for (index, url) in recipeURLs.enumerated() {
+                    group.addTask {
+                        let recipeStartTime = CFAbsoluteTimeGetCurrent()
+                        print("📋 Processing recipe \(index + 1)/\(totalCount): \(url)")
+                        
+                        do {
+                            let result = try await self.llmService.parseRecipe(from: url)
+                            let recipeEndTime = CFAbsoluteTimeGetCurrent()
+                            let recipeDuration = recipeEndTime - recipeStartTime
+                            
+                            print("⏱️ Recipe \(index + 1) completed in \(String(format: "%.2f", recipeDuration)) seconds")
+                            
+                            return (index, result, recipeDuration)
+                        } catch {
+                            let recipeEndTime = CFAbsoluteTimeGetCurrent()
+                            let recipeDuration = recipeEndTime - recipeStartTime
+                            
+                            print("⏱️ Recipe \(index + 1) failed after \(String(format: "%.2f", recipeDuration)) seconds")
+                            
+                            let errorResult = RecipeParsingResult(recipe: Recipe(url: url), success: false, error: error.localizedDescription)
+                            return (index, errorResult, recipeDuration)
+                        }
+                    }
+                }
                 
-                do {
-                    let result = try await llmService.parseRecipe(from: url)
-                    let recipeEndTime = CFAbsoluteTimeGetCurrent()
-                    let recipeDuration = recipeEndTime - recipeStartTime
-                    individualTimings.append(recipeDuration)
-                    
-                    print("⏱️ Recipe \(index + 1) completed in \(String(format: "%.2f", recipeDuration)) seconds")
+                // Collect results as they complete
+                for await (index, result, duration) in group {
+                    individualTimings.append(duration)
                     
                     await MainActor.run {
                         parsingResults.append(result)
@@ -162,18 +182,6 @@ struct RecipeInputView: View {
                             print("❌ Failed to parse recipe: \(result.error ?? "Unknown error")")
                         }
                     }
-                } catch {
-                    let recipeEndTime = CFAbsoluteTimeGetCurrent()
-                    let recipeDuration = recipeEndTime - recipeStartTime
-                    individualTimings.append(recipeDuration)
-                    
-                    print("⏱️ Recipe \(index + 1) failed after \(String(format: "%.2f", recipeDuration)) seconds")
-                    
-                    await MainActor.run {
-                        let errorResult = RecipeParsingResult(recipe: Recipe(url: url), success: false, error: error.localizedDescription)
-                        parsingResults.append(errorResult)
-                        print("❌ Error parsing recipe: \(error.localizedDescription)")
-                    }
                 }
             }
             
@@ -182,7 +190,7 @@ struct RecipeInputView: View {
                 let totalDuration = totalEndTime - startTime
                 
                 // Log comprehensive timing statistics
-                print("⏱️ === PARSING TIMING SUMMARY ===")
+                print("⏱️ === PARALLEL PARSING TIMING SUMMARY ===")
                 print("⏱️ Total parsing time: \(String(format: "%.2f", totalDuration)) seconds")
                 print("⏱️ Number of recipes processed: \(totalCount)")
                 print("⏱️ Successful recipes: \(successCount)")
@@ -196,6 +204,11 @@ struct RecipeInputView: View {
                     print("⏱️ Average time per recipe: \(String(format: "%.2f", averageTime)) seconds")
                     print("⏱️ Fastest recipe: \(String(format: "%.2f", minTime)) seconds")
                     print("⏱️ Slowest recipe: \(String(format: "%.2f", maxTime)) seconds")
+                    
+                    // Calculate parallelization efficiency
+                    let sequentialTime = individualTimings.reduce(0, +)
+                    let efficiency = (sequentialTime / totalDuration) * 100
+                    print("⏱️ Parallelization efficiency: \(String(format: "%.1f", efficiency))%")
                 }
                 
                 // Log success/failure summary
@@ -207,7 +220,7 @@ struct RecipeInputView: View {
                     print("❌ All recipes failed to parse")
                 }
                 
-                print("⏱️ === END TIMING SUMMARY ===")
+                print("⏱️ === END PARALLEL TIMING SUMMARY ===")
                 
                 isParsing = false
                 
