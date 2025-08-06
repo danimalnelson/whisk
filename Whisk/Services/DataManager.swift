@@ -121,6 +121,14 @@ class DataManager: ObservableObject {
         updateCurrentList(list)
     }
     
+    func toggleIngredientChecked(_ ingredient: Ingredient, in list: GroceryList) {
+        guard let listIndex = groceryLists.firstIndex(where: { $0.id == list.id }),
+              let ingredientIndex = groceryLists[listIndex].ingredients.firstIndex(where: { $0.id == ingredient.id }) else { return }
+        
+        groceryLists[listIndex].ingredients[ingredientIndex].isChecked.toggle()
+        saveData()
+    }
+    
     func removeIngredient(_ ingredient: Ingredient) {
         guard var list = currentList,
               let index = list.ingredients.firstIndex(where: { $0.id == ingredient.id }) else { return }

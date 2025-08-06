@@ -8,7 +8,7 @@ struct GroceryListView: View {
     
     var body: some View {
         NavigationView {
-            VStack {
+            VStack(spacing: 0) {
                 if dataManager.groceryLists.isEmpty {
                     // Empty State
                     VStack(spacing: 20) {
@@ -31,6 +31,7 @@ struct GroceryListView: View {
                         .buttonStyle(.borderedProminent)
                     }
                     .padding()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     // List of Grocery Lists
                     List {
@@ -41,7 +42,7 @@ struct GroceryListView: View {
                                         Text(list.name)
                                             .font(.headline)
                                         
-                                        Text("\(list.ingredients.count) items")
+                                        Text("\(list.ingredients.filter { !$0.isChecked }.count) items remaining")
                                             .font(.caption)
                                             .foregroundColor(.secondary)
                                     }
@@ -52,18 +53,31 @@ struct GroceryListView: View {
                         }
                         .onDelete(perform: deleteLists)
                     }
+                    .listStyle(PlainListStyle())
                 }
+                
+                // Bottom Bar
+                HStack {
+                    Spacer()
+                    
+                                    Button(action: { showingCreateList = true }) {
+                    Image(systemName: "plus")
+                        .font(.title2)
+                        .foregroundColor(.blue)
+                }
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
+                .background(Color(.systemBackground))
+                .overlay(
+                    Rectangle()
+                        .frame(height: 0.5)
+                        .foregroundColor(Color(.separator)),
+                    alignment: .top
+                )
             }
             .navigationTitle("Grocery Lists")
             .navigationBarTitleDisplayMode(.large)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: { showingCreateList = true }) {
-                        Image(systemName: "plus")
-                            .foregroundColor(.blue)
-                    }
-                }
-            }
             .sheet(isPresented: $showingCreateList) {
                 CreateListView(dataManager: dataManager, isPresented: $showingCreateList, onListCreated: { newList in
                     navigateToNewList = newList
@@ -138,6 +152,7 @@ struct GroceryListDetailView: View {
     @ObservedObject var dataManager: DataManager
     let list: GroceryList
     @State private var showingRecipeInput = false
+    @Environment(\.dismiss) private var dismiss
     
     // Get the current version of this list from the DataManager
     private var currentList: GroceryList? {
@@ -148,7 +163,7 @@ struct GroceryListDetailView: View {
     }
     
     var body: some View {
-        VStack {
+        VStack(spacing: 0) {
             if let currentList = currentList, currentList.ingredients.isEmpty {
                 // Empty List State
                 VStack(spacing: 20) {
@@ -168,17 +183,19 @@ struct GroceryListDetailView: View {
 
                 }
                 .padding()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let currentList = currentList {
                 // Grocery List Content
                 List {
                     ForEach(GroceryCategory.allCases, id: \.self) { category in
                         if let ingredients = currentList.ingredientsByCategory[category],
                            !ingredients.isEmpty {
-                            Section(header: CategoryHeader(category: category, count: ingredients.count)) {
+                            Section(header: CategoryHeader(category: category, ingredients: ingredients)) {
                                 ForEach(ingredients) { ingredient in
                                     IngredientRow(
                                         ingredient: ingredient,
-                                        dataManager: dataManager
+                                        dataManager: dataManager,
+                                        list: currentList
                                     )
                                     .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                         Button(role: .destructive) {
@@ -215,15 +232,53 @@ struct GroceryListDetailView: View {
                     .buttonStyle(.borderedProminent)
                 }
                 .padding()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+            
+            // Bottom Bar
+            HStack {
+                Spacer()
+                
+                if let currentList = currentList {
+                    Text("\(currentList.ingredients.filter { !$0.isChecked }.count) items remaining")
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.primary)
+                }
+                
+                Spacer()
+                
+                Button(action: { showingRecipeInput = true }) {
+                    Image(systemName: "plus")
+                        .font(.title2)
+                        .foregroundColor(.blue)
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 10)
+            .background(Color(.systemBackground))
+            .overlay(
+                Rectangle()
+                    .frame(height: 0.5)
+                    .foregroundColor(Color(.separator)),
+                alignment: .top
+            )
         }
         .navigationTitle(currentList?.name ?? list.name)
         .navigationBarTitleDisplayMode(.large)
+        .navigationBarBackButtonHidden(true)
         .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button(action: { showingRecipeInput = true }) {
-                    Image(systemName: "plus")
-                        .foregroundColor(.blue)
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button(action: {
+                    dismiss()
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 16, weight: .medium))
+                        Text("Lists")
+                            .font(.system(size: 17))
+                    }
+                    .foregroundColor(.blue)
                 }
             }
         }
@@ -235,7 +290,11 @@ struct GroceryListDetailView: View {
 
 struct CategoryHeader: View {
     let category: GroceryCategory
-    let count: Int
+    let ingredients: [Ingredient]
+    
+    private var remainingCount: Int {
+        ingredients.filter { !$0.isChecked }.count
+    }
     
     var body: some View {
         HStack {
@@ -248,7 +307,7 @@ struct CategoryHeader: View {
             
             Spacer()
             
-            Text("\(count) items")
+            Text("\(remainingCount) items remaining")
                 .font(.caption)
                 .foregroundColor(.secondary)
         }
@@ -258,11 +317,12 @@ struct CategoryHeader: View {
 struct IngredientRow: View {
     let ingredient: Ingredient
     let dataManager: DataManager
+    let list: GroceryList
     
     var body: some View {
         HStack {
             Button(action: {
-                dataManager.toggleIngredientChecked(ingredient)
+                dataManager.toggleIngredientChecked(ingredient, in: list)
             }) {
                 Image(systemName: ingredient.isChecked ? "checkmark.circle.fill" : "circle")
                     .foregroundColor(ingredient.isChecked ? .green : .gray)
