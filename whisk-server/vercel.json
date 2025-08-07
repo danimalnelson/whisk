@@ -3,6 +3,22 @@
     "api/call-openai.js": {
       "maxDuration": 30,
       "memory": 1024
+    },
+    "api/parse-recipe.js": {
+      "maxDuration": 30,
+      "memory": 1024
+    },
+    "api/test.js": {
+      "maxDuration": 10,
+      "memory": 512
+    },
+    "api/debug.js": {
+      "maxDuration": 10,
+      "memory": 512
+    },
+    "api/test-html.js": {
+      "maxDuration": 30,
+      "memory": 1024
     }
   },
   "regions": ["iad1"],
