@@ -227,11 +227,14 @@ class LLMService: ObservableObject {
         return """
         Parse ingredients into {"ingredients":[{"name":X,"amount":Y,"unit":Z,"category":C}]}
 
+        IMPORTANT: Only parse ingredients that are actually listed in the provided content. Do not add ingredients that are not present.
+
         Rules:
         1. name: Remove prep words, keep essential descriptors
         2. amount: Convert ALL fractions to decimals (default to 1 if no amount)
         3. unit: Standardize to full words (default to "piece" if no unit)
         4. category: Must be one of [Produce, Meat & Seafood, Deli, Bakery, Frozen, Pantry, Dairy, Beverages]
+        5. ONLY include ingredients that are explicitly listed in the content
 
         Examples showing exact expected output:
         "2 1/2 tbsp finely chopped fresh basil"
@@ -255,7 +258,7 @@ class LLMService: ObservableObject {
         "1/4 cup fresh lemon juice"
         {"name":"lemon juice","amount":0.25,"unit":"cup","category":"Produce"}
 
-        Now parse exactly as shown:
+        Now parse ONLY the ingredients listed in this content:
         \(ingredientContent)
         """
     }
