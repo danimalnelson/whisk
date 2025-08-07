@@ -1,5 +1,44 @@
 import SwiftUI
 
+// MARK: - Shimmer Effect
+struct ShimmerEffect: ViewModifier {
+    @State private var phase: CGFloat = 0
+    
+    func body(content: Content) -> some View {
+        content
+            .overlay(
+                LinearGradient(
+                    gradient: Gradient(colors: [
+                        Color.clear,
+                        Color.white.opacity(0.8),
+                        Color.clear
+                    ]),
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+                .offset(x: -200 + (phase * 400))
+                .animation(
+                    Animation.linear(duration: 1.4),
+                    value: phase
+                )
+                .blendMode(.overlay)
+            )
+            .onAppear {
+                phase = 1
+            }
+    }
+}
+
+extension View {
+    func shimmer(_ isActive: Bool = true) -> some View {
+        if isActive {
+            return AnyView(modifier(ShimmerEffect()))
+        } else {
+            return AnyView(self)
+        }
+    }
+}
+
 struct GroceryListView: View {
     @ObservedObject var dataManager: DataManager
     @State private var showingCreateList = false
@@ -14,7 +53,7 @@ struct GroceryListView: View {
                     VStack(spacing: 20) {
                         Image(systemName: "cart.badge.plus")
                             .font(.system(size: 60))
-                            .foregroundColor(.gray)
+                            .foregroundColor(.blue)
                         
                         Text("No Grocery Lists")
                             .font(.title2)
@@ -36,66 +75,66 @@ struct GroceryListView: View {
                     // List of Grocery Lists
                     List {
                         ForEach(dataManager.groceryLists) { list in
-                            NavigationLink(destination: GroceryListDetailView(dataManager: dataManager, list: list)) {
+                            Button(action: {
+                                navigateToNewList = list
+                            }) {
                                 HStack {
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text(list.name)
-                                            .font(.headline)
+                                            .font(.system(size: 16, weight: .regular))
+                                            .foregroundColor(.primary)
                                         
                                         Text("\(list.ingredients.filter { !$0.isChecked }.count) items remaining")
-                                            .font(.caption)
+                                            .font(.system(size: 14, weight: .regular))
                                             .foregroundColor(.secondary)
                                     }
                                     
                                     Spacer()
                                 }
                             }
+                            .buttonStyle(PlainButtonStyle())
                         }
                         .onDelete(perform: deleteLists)
                     }
                     .listStyle(PlainListStyle())
                 }
-                
-                // Bottom Bar
-                HStack {
-                    Spacer()
-                    
-                                    Button(action: { showingCreateList = true }) {
-                    Image(systemName: "plus")
-                        .font(.title2)
-                        .foregroundColor(.blue)
-                }
-                }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 10)
-                .background(Color(.systemBackground))
-                .overlay(
-                    Rectangle()
-                        .frame(height: 0.5)
-                        .foregroundColor(Color(.separator)),
-                    alignment: .top
-                )
             }
+            .overlay(
+                // Floating Action Button
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        Button(action: { showingCreateList = true }) {
+                            Image(systemName: "plus")
+                                .font(.title2)
+                                .foregroundColor(.white)
+                                .frame(width: 56, height: 56)
+                                .background(Color.blue)
+                                .clipShape(Circle())
+                                .shadow(color: .black.opacity(0.3), radius: 4, x: 0, y: 2)
+                        }
+                        .padding(.trailing, 20)
+                        .padding(.bottom, 20)
+                    }
+                }
+            )
             .navigationTitle("Lists")
             .navigationBarTitleDisplayMode(.large)
+            .background()
             .sheet(isPresented: $showingCreateList) {
                 CreateListView(dataManager: dataManager, isPresented: $showingCreateList, onListCreated: { newList in
                     navigateToNewList = newList
                 })
             }
-            .background(
-                NavigationLink(
-                    destination: navigateToNewList.map { list in
-                        GroceryListDetailView(dataManager: dataManager, list: list)
-                    },
-                    isActive: Binding(
-                        get: { navigateToNewList != nil },
-                        set: { if !$0 { navigateToNewList = nil } }
-                    )
-                ) {
-                    EmptyView()
+            .navigationDestination(isPresented: Binding(
+                get: { navigateToNewList != nil },
+                set: { if !$0 { navigateToNewList = nil } }
+            )) {
+                if let list = navigateToNewList {
+                    GroceryListDetailView(dataManager: dataManager, list: list)
                 }
-            )
+            }
         }
     }
     
@@ -136,12 +175,14 @@ struct CreateListView: View {
                 Spacer()
             }
             .padding()
+            .background()
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Cancel") {
                         isPresented = false
                     }
+                    .foregroundColor(.blue)
                 }
             }
         }
@@ -158,8 +199,8 @@ struct RenameListView: View {
         NavigationView {
             VStack(spacing: 20) {
                 Text("Rename")
-                    .font(.title2)
-                    .fontWeight(.semibold)
+                    .font(.headline)
+                    .foregroundColor(.primary)
                 
                 TextField("List Name", text: $listName)
                     .textFieldStyle(RoundedBorderTextFieldStyle())
@@ -177,12 +218,14 @@ struct RenameListView: View {
                 Spacer()
             }
             .padding()
+            .background()
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Cancel") {
                         isPresented = false
                     }
+                    .foregroundColor(.blue)
                 }
             }
             .onAppear {
@@ -214,11 +257,11 @@ struct GroceryListDetailView: View {
                 VStack(spacing: 20) {
                     Image(systemName: "cart.badge.plus")
                         .font(.system(size: 60))
-                        .foregroundColor(.gray)
+                        .foregroundColor(.blue)
                     
                     Text("Empty List")
-                        .font(.title2)
-                        .fontWeight(.semibold)
+                        .font(.headline)
+                        .foregroundColor(.primary)
                     
                     Text("Add some recipes to get started")
                         .font(.body)
@@ -229,6 +272,7 @@ struct GroceryListDetailView: View {
                 }
                 .padding()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background()
             } else if let currentList = currentList {
                 // Grocery List Content
                 List {
@@ -260,11 +304,11 @@ struct GroceryListDetailView: View {
                 VStack(spacing: 20) {
                     Image(systemName: "cart.badge.plus")
                         .font(.system(size: 60))
-                        .foregroundColor(.gray)
+                        .foregroundColor(.blue)
                     
                     Text("List Not Found")
-                        .font(.title2)
-                        .fontWeight(.semibold)
+                        .font(.headline)
+                        .foregroundColor(.primary)
                     
                     Text("This list may have been deleted or is unavailable")
                         .font(.body)
@@ -278,17 +322,15 @@ struct GroceryListDetailView: View {
                 }
                 .padding()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background()
             }
             
             // Bottom Bar
             HStack {
-                Spacer()
-                
                 if let currentList = currentList {
                     Text("\(currentList.ingredients.filter { !$0.isChecked }.count) items remaining")
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(.primary)
+                        .font(.system(size: 14, weight: .regular))
+                        .foregroundColor(.secondary)
                 }
                 
                 Spacer()
@@ -377,18 +419,16 @@ struct CategoryHeader: View {
     
     var body: some View {
         HStack {
-            Image(systemName: category.icon)
-                .foregroundColor(.blue)
-            
             Text(category.displayName)
-                .font(.headline)
-                .fontWeight(.semibold)
+                .font(.system(size: 18, weight: .bold))
+                .foregroundColor(.primary)
             
             Spacer()
             
             Text("\(remainingCount) items remaining")
-                .font(.caption)
+                .font(.system(size: 14, weight: .regular))
                 .foregroundColor(.secondary)
+                .shimmer(remainingCount == 0)
         }
     }
 }
@@ -545,19 +585,19 @@ struct IngredientRow: View {
                 dataManager.toggleIngredientChecked(ingredient, in: list)
             }) {
                 Image(systemName: ingredient.isChecked ? "checkmark.circle.fill" : "circle")
-                    .foregroundColor(ingredient.isChecked ? .green : .gray)
+                    .foregroundColor(ingredient.isChecked ? .white : .gray)
                     .font(.title3)
             }
             .buttonStyle(PlainButtonStyle())
             
             VStack(alignment: .leading, spacing: 2) {
                 Text(formatIngredientName(ingredient.name, amount: ingredient.amount))
-                    .font(.body)
+                    .font(.system(size: 16, weight: .regular))
                     .strikethrough(ingredient.isChecked)
                     .foregroundColor(ingredient.isChecked ? .secondary : .primary)
                 
                 Text(formatAmountAndUnit(amount: ingredient.amount, unit: ingredient.unit))
-                    .font(.caption)
+                    .font(.system(size: 14, weight: .regular))
                     .foregroundColor(.secondary)
             }
             

@@ -25,6 +25,7 @@ struct RecipeInputView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Add Recipe URLs")
                         .font(.headline)
+                        .foregroundColor(.primary)
                     
                     HStack {
                         TextField("Enter recipe URL", text: $newURL)
@@ -36,6 +37,7 @@ struct RecipeInputView: View {
                             addURL()
                         }
                         .disabled(newURL.isEmpty)
+                        .buttonStyle(.bordered)
                     }
                 }
                 .padding(.horizontal)
@@ -45,6 +47,7 @@ struct RecipeInputView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Recipe URLs (\(recipeURLs.count))")
                             .font(.headline)
+                            .foregroundColor(.primary)
                         
                         ScrollView {
                             LazyVStack(spacing: 8) {
