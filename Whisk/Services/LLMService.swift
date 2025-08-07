@@ -3,17 +3,138 @@ import Foundation
 class LLMService: ObservableObject {
     private let baseURL = "https://whisk-server-97zqsyqbp-dannelson.vercel.app/api/call-openai"
     
+    // 🚀 NEW: Simple in-memory cache for parsed recipes
+    private var recipeCache: [String: RecipeParsingResult] = [:]
+    private let cacheQueue = DispatchQueue(label: "recipeCache", attributes: .concurrent)
+    
+    // 🚀 NEW: Performance tracking
+    private var performanceStats = PerformanceStats()
+    
     init() {
+    }
+    
+    // 🚀 NEW: Performance statistics
+    struct PerformanceStats {
+        var cacheHits: Int = 0
+        var structuredDataSuccess: Int = 0
+        var regexSuccess: Int = 0
+        var llmSuccess: Int = 0
+        var totalRequests: Int = 0
+        
+        var cacheHitRate: Double {
+            return totalRequests > 0 ? Double(cacheHits) / Double(totalRequests) : 0
+        }
+        
+        var structuredDataRate: Double {
+            return totalRequests > 0 ? Double(structuredDataSuccess) / Double(totalRequests) : 0
+        }
+        
+        var regexRate: Double {
+            return totalRequests > 0 ? Double(regexSuccess) / Double(totalRequests) : 0
+        }
+        
+        var llmRate: Double {
+            return totalRequests > 0 ? Double(llmSuccess) / Double(totalRequests) : 0
+        }
+        
+        mutating func recordCacheHit() {
+            cacheHits += 1
+            totalRequests += 1
+        }
+        
+        mutating func recordStructuredDataSuccess() {
+            structuredDataSuccess += 1
+            totalRequests += 1
+        }
+        
+        mutating func recordRegexSuccess() {
+            regexSuccess += 1
+            totalRequests += 1
+        }
+        
+        mutating func recordLLMSuccess() {
+            llmSuccess += 1
+            totalRequests += 1
+        }
+        
+        func printStats() {
+            print("📊 Performance Stats:")
+            print("   Total requests: \(totalRequests)")
+            print("   Cache hit rate: \(String(format: "%.1f", cacheHitRate * 100))%")
+            print("   Structured data success: \(String(format: "%.1f", structuredDataRate * 100))%")
+            print("   Regex parsing success: \(String(format: "%.1f", regexRate * 100))%")
+            print("   LLM fallback: \(String(format: "%.1f", llmRate * 100))%")
+        }
     }
     
     func parseRecipe(from url: String) async throws -> RecipeParsingResult {
         print("⏱️ === Recipe Parsing Start ===")
         let totalStartTime = CFAbsoluteTimeGetCurrent()
         
+        // 🚀 NEW: Check cache first
+        if let cachedResult = getCachedResult(for: url) {
+            print("✅ Found cached result for \(url)")
+            performanceStats.recordCacheHit()
+            let totalTime = CFAbsoluteTimeGetCurrent() - totalStartTime
+            print("⏱️ Total time (cached): \(String(format: "%.2f", totalTime))s")
+            print("⏱️ === Recipe Parsing End ===")
+            performanceStats.printStats()
+            return cachedResult
+        }
+        
         // Fetch and process webpage
         let webpageContent = try await fetchWebpageContent(from: url)
+        
+        // 🚀 NEW: Try structured data extraction first (fastest path)
+        if let structuredData = extractStructuredData(from: webpageContent),
+           let recipeFromStructured = parseStructuredData(structuredData, originalURL: url) {
+            print("✅ Successfully parsed from structured data - skipping LLM call!")
+            performanceStats.recordStructuredDataSuccess()
+            let result = RecipeParsingResult(recipe: recipeFromStructured, success: true, error: nil)
+            
+            // Cache the result
+            cacheResult(result, for: url)
+            
+            let totalTime = CFAbsoluteTimeGetCurrent() - totalStartTime
+            print("⏱️ Total time (structured data): \(String(format: "%.2f", totalTime))s")
+            print("⏱️ === Recipe Parsing End ===")
+            performanceStats.printStats()
+            return result
+        }
+        
+        // Extract ingredient section and try regex fallback first
         let ingredientSection = extractIngredientSection(from: webpageContent)
-        let prompt = createRecipeParsingPrompt(ingredientContent: ingredientSection)
+        
+        // 🚀 NEW: Try regex-based parsing as fallback (fast, no LLM cost)
+        if let regexParsedIngredients = parseIngredientsWithRegex(ingredientSection),
+           regexParsedIngredients.count >= 3 {
+            print("✅ Successfully parsed \(regexParsedIngredients.count) ingredients with regex - skipping LLM call!")
+            performanceStats.recordRegexSuccess()
+            let recipe = Recipe(url: url)
+            recipe.ingredients = regexParsedIngredients
+            recipe.isParsed = true
+            
+            // Extract recipe title
+            recipe.name = extractRecipeTitle(from: webpageContent)
+            
+            let result = RecipeParsingResult(recipe: recipe, success: true, error: nil)
+            
+            // Cache the result
+            cacheResult(result, for: url)
+            
+            let totalTime = CFAbsoluteTimeGetCurrent() - totalStartTime
+            print("⏱️ Total time (regex parsing): \(String(format: "%.2f", totalTime))s")
+            print("⏱️ === Recipe Parsing End ===")
+            performanceStats.printStats()
+            return result
+        }
+        
+        // 🚀 NEW: Estimate token usage and truncate if needed
+        let estimatedTokens = estimateTokenCount(ingredientSection)
+        let maxTokens = 4000 // Conservative limit for GPT-4
+        let truncatedContent = estimatedTokens > maxTokens ? truncateContent(ingredientSection, targetTokens: maxTokens) : ingredientSection
+        
+        let prompt = createRecipeParsingPrompt(ingredientContent: truncatedContent)
         
         // Call LLM
         let llmStartTime = CFAbsoluteTimeGetCurrent()
@@ -24,11 +145,390 @@ class LLMService: ObservableObject {
         // Parse response
         let result = parseLLMResponse(response, originalURL: url, originalContent: webpageContent)
         
+        // Cache the result (even if it failed, to avoid repeated failures)
+        cacheResult(result, for: url)
+        
+        // Record LLM success if parsing succeeded
+        if result.success {
+            performanceStats.recordLLMSuccess()
+        }
+        
         let totalTime = CFAbsoluteTimeGetCurrent() - totalStartTime
         print("⏱️ Total time: \(String(format: "%.2f", totalTime))s")
         print("⏱️ === Recipe Parsing End ===")
+        performanceStats.printStats()
         
         return result
+    }
+    
+    // 🚀 NEW: Cache management methods
+    func getCachedResult(for url: String) -> RecipeParsingResult? {
+        return cacheQueue.sync {
+            return recipeCache[url]
+        }
+    }
+    
+    func cacheResult(_ result: RecipeParsingResult, for url: String) {
+        cacheQueue.async(flags: .barrier) {
+            self.recipeCache[url] = result
+            
+            // Keep cache size manageable (max 50 entries)
+            if self.recipeCache.count > 50 {
+                // Remove oldest entries (simple FIFO)
+                let keysToRemove = Array(self.recipeCache.keys.prefix(10))
+                for key in keysToRemove {
+                    self.recipeCache.removeValue(forKey: key)
+                }
+            }
+        }
+    }
+    
+    // 🚀 NEW: Clear cache method (useful for testing)
+    func clearCache() {
+        cacheQueue.async(flags: .barrier) {
+            self.recipeCache.removeAll()
+        }
+    }
+    
+    // 🚀 NEW: Get performance stats for debugging
+    func getPerformanceStats() -> PerformanceStats {
+        return performanceStats
+    }
+    
+    // 🚀 NEW: Reset performance stats
+    func resetPerformanceStats() {
+        performanceStats = PerformanceStats()
+    }
+    
+    // 🚀 NEW: Parse structured data (JSON-LD) from HTML
+    func parseStructuredData(_ jsonString: String, originalURL: String) -> Recipe? {
+        print("🔍 Parsing structured data...")
+        
+        do {
+            guard let jsonData = jsonString.data(using: .utf8) else {
+                print("❌ Failed to convert JSON string to data")
+                return nil
+            }
+            
+            let json = try JSONSerialization.jsonObject(with: jsonData) as? [String: Any]
+            guard let json = json else {
+                print("❌ Failed to parse JSON")
+                return nil
+            }
+            
+            // Handle both single recipe and array of recipes
+            var recipeData: [String: Any]?
+            if let recipes = json["@graph"] as? [[String: Any]] {
+                // Find the recipe object in the graph
+                recipeData = recipes.first { recipe in
+                    recipe["@type"] as? String == "Recipe"
+                }
+            } else if json["@type"] as? String == "Recipe" {
+                recipeData = json
+            }
+            
+            guard let recipeData = recipeData else {
+                print("❌ No recipe data found in structured data")
+                return nil
+            }
+            
+            let recipe = Recipe(url: originalURL)
+            
+            // Extract recipe name
+            if let name = recipeData["name"] as? String {
+                recipe.name = name
+                print("📝 Recipe name: \(name)")
+            }
+            
+            // Extract ingredients
+            var ingredients: [Ingredient] = []
+            
+            // Try different ingredient field names
+            let ingredientFields = ["recipeIngredient", "ingredients", "ingredient"]
+            var ingredientList: [String] = []
+            
+            for field in ingredientFields {
+                if let fieldData = recipeData[field] {
+                    if let stringList = fieldData as? [String] {
+                        ingredientList = stringList
+                        break
+                    } else if let dictList = fieldData as? [[String: Any]] {
+                        // Handle structured ingredient objects
+                        for ingredientDict in dictList {
+                            if let name = ingredientDict["name"] as? String {
+                                ingredientList.append(name)
+                            }
+                        }
+                        break
+                    }
+                }
+            }
+            
+            print("📋 Found \(ingredientList.count) ingredients in structured data")
+            
+            // Parse each ingredient string
+            for ingredientString in ingredientList {
+                if let ingredient = parseIngredientFromString(ingredientString) {
+                    ingredients.append(ingredient)
+                }
+            }
+            
+            if ingredients.count >= 3 {
+                recipe.ingredients = ingredients
+                recipe.isParsed = true
+                print("✅ Successfully parsed \(ingredients.count) ingredients from structured data")
+                return recipe
+            } else {
+                print("❌ Not enough ingredients parsed from structured data (\(ingredients.count))")
+                return nil
+            }
+            
+        } catch {
+            print("❌ Error parsing structured data: \(error)")
+            return nil
+        }
+    }
+    
+    // 🚀 NEW: Regex-based ingredient parsing (fast fallback)
+    func parseIngredientsWithRegex(_ content: String) -> [Ingredient]? {
+        print("🔍 Attempting regex-based ingredient parsing...")
+        
+        let lines = content.components(separatedBy: .newlines)
+        var ingredients: [Ingredient] = []
+        
+        // Enhanced regex pattern for ingredient parsing
+        let ingredientPattern = #"(?i)(\d+[\d\/\s\.]*)\s*(cup|tsp|tbsp|oz|pound|grams?|ml|clove|piece|pieces|can|cans|jar|jars|bottle|bottles|package|packages|bag|bags|bunch|bunches|head|heads|slice|slices|small|medium|large|extra\s*large|xl)?\s*(.*)"#
+        
+        guard let regex = try? NSRegularExpression(pattern: ingredientPattern, options: [.caseInsensitive]) else {
+            print("❌ Failed to create regex pattern")
+            return nil
+        }
+        
+        for line in lines {
+            let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmedLine.isEmpty { continue }
+            
+            let matches = regex.matches(in: trimmedLine, options: [], range: NSRange(trimmedLine.startIndex..., in: trimmedLine))
+            
+            for match in matches {
+                if match.numberOfRanges >= 4 {
+                    let amountRange = match.range(at: 1)
+                    let unitRange = match.range(at: 2)
+                    let nameRange = match.range(at: 3)
+                    
+                    if let amountString = Range(amountRange, in: trimmedLine).map({ String(trimmedLine[$0]) }),
+                       let nameString = Range(nameRange, in: trimmedLine).map({ String(trimmedLine[$0]) }) {
+                        
+                        // Parse amount (handle fractions)
+                        let amount = parseAmount(amountString)
+                        
+                        // Parse unit
+                        let unit: String
+                        if unitRange.location != NSNotFound,
+                           let unitString = Range(unitRange, in: trimmedLine).map({ String(trimmedLine[$0]) }) {
+                            unit = standardizeUnit(unitString)
+                        } else {
+                            unit = "piece"
+                        }
+                        
+                        // Clean ingredient name
+                        let cleanName = cleanIngredientName(nameString)
+                        
+                        // Determine category
+                        let category = determineCategory(cleanName)
+                        
+                        let ingredient = Ingredient(name: cleanName, amount: amount, unit: unit, category: category)
+                        ingredients.append(ingredient)
+                        
+                        print("📋 Regex parsed: \(cleanName) - \(amount) \(unit) (\(category))")
+                    }
+                }
+            }
+        }
+        
+        if ingredients.count >= 3 {
+            print("✅ Regex parsing successful: \(ingredients.count) ingredients")
+            return ingredients
+        } else {
+            print("❌ Regex parsing failed: only \(ingredients.count) ingredients found")
+            return nil
+        }
+    }
+    
+    // 🚀 NEW: Parse amount from string (handles fractions)
+    func parseAmount(_ amountString: String) -> Double {
+        let cleanAmount = amountString.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // Handle fractions
+        if cleanAmount.contains("/") {
+            let parts = cleanAmount.components(separatedBy: "/")
+            if parts.count == 2,
+               let numerator = Double(parts[0]),
+               let denominator = Double(parts[1]),
+               denominator != 0 {
+                return numerator / denominator
+            }
+        }
+        
+        // Handle mixed numbers (e.g., "1 1/2")
+        if cleanAmount.contains(" ") {
+            let parts = cleanAmount.components(separatedBy: " ")
+            if parts.count == 2,
+               let wholePart = Double(parts[0]),
+               parts[1].contains("/") {
+                let fractionParts = parts[1].components(separatedBy: "/")
+                if fractionParts.count == 2,
+                   let numerator = Double(fractionParts[0]),
+                   let denominator = Double(fractionParts[1]),
+                   denominator != 0 {
+                    return wholePart + (numerator / denominator)
+                }
+            }
+        }
+        
+        // Default to parsing as double
+        return Double(cleanAmount) ?? 1.0
+    }
+    
+    // 🚀 NEW: Determine ingredient category from name
+    private func determineCategory(_ name: String) -> GroceryCategory {
+        let lowercasedName = name.lowercased()
+        
+        // Check category overrides first
+        for (keyword, category) in categoryOverrides {
+            if lowercasedName.contains(keyword) {
+                return category
+            }
+        }
+        
+        // Check category keywords
+        for (category, keywords) in categoryKeywords {
+            for keyword in keywords {
+                if lowercasedName.contains(keyword) {
+                    return category
+                }
+            }
+        }
+        
+        // Default to pantry
+        return .pantry
+    }
+    
+    // 🚀 NEW: Extract recipe title from HTML
+    func extractRecipeTitle(from html: String) -> String? {
+        print("🔍 Extracting recipe title...")
+        
+        // Try JSON-LD first
+        if let structuredData = extractStructuredData(from: html),
+           let jsonData = structuredData.data(using: .utf8),
+           let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
+            
+            // Handle both single recipe and array of recipes
+            var recipeData: [String: Any]?
+            if let recipes = json["@graph"] as? [[String: Any]] {
+                recipeData = recipes.first { recipe in
+                    recipe["@type"] as? String == "Recipe"
+                }
+            } else if json["@type"] as? String == "Recipe" {
+                recipeData = json
+            }
+            
+            if let recipeData = recipeData,
+               let name = recipeData["name"] as? String {
+                print("✅ Found title in JSON-LD: \(name)")
+                return name
+            }
+        }
+        
+        // Try HTML title tag
+        let titlePattern = #"<title[^>]*>(.*?)</title>"#
+        if let regex = try? NSRegularExpression(pattern: titlePattern, options: [.caseInsensitive]),
+           let match = regex.firstMatch(in: html, options: [], range: NSRange(html.startIndex..., in: html)),
+           let range = Range(match.range(at: 1), in: html) {
+            let title = String(html[range])
+                .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            
+            if !title.isEmpty && title.count < 100 {
+                print("✅ Found title in HTML: \(title)")
+                return title
+            }
+        }
+        
+        // Try h1 tag
+        let h1Pattern = #"<h1[^>]*>(.*?)</h1>"#
+        if let regex = try? NSRegularExpression(pattern: h1Pattern, options: [.caseInsensitive]),
+           let match = regex.firstMatch(in: html, options: [], range: NSRange(html.startIndex..., in: html)),
+           let range = Range(match.range(at: 1), in: html) {
+            let title = String(html[range])
+                .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            
+            if !title.isEmpty && title.count < 100 {
+                print("✅ Found title in H1: \(title)")
+                return title
+            }
+        }
+        
+        print("❌ No recipe title found")
+        return nil
+    }
+    
+    // 🚀 NEW: Estimate token count for content
+    func estimateTokenCount(_ content: String) -> Int {
+        // Rough estimation: 1 token ≈ 4 characters for English text
+        let estimatedTokens = content.count / 4
+        print("📊 Estimated tokens: \(estimatedTokens)")
+        return estimatedTokens
+    }
+    
+    // 🚀 NEW: Truncate content to target token count
+    func truncateContent(_ content: String, targetTokens: Int) -> String {
+        let targetChars = targetTokens * 4 // Rough conversion back to characters
+        let truncated = String(content.prefix(targetChars))
+        print("✂️ Truncated content from \(content.count) to \(truncated.count) characters")
+        return truncated
+    }
+    
+    // 🚀 NEW: Parse ingredient from string (for structured data)
+    func parseIngredientFromString(_ ingredientString: String) -> Ingredient? {
+        let cleanString = ingredientString.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // Try to extract amount and unit using regex
+        let pattern = #"(?i)(\d+[\d\/\s\.]*)\s*(cup|tsp|tbsp|oz|pound|grams?|ml|clove|piece|pieces|can|cans|jar|jars|bottle|bottles|package|packages|bag|bags|bunch|bunches|head|heads|slice|slices|small|medium|large|extra\s*large|xl)?\s*(.*)"#
+        
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+              let match = regex.firstMatch(in: cleanString, options: [], range: NSRange(cleanString.startIndex..., in: cleanString)),
+              match.numberOfRanges >= 4 else {
+            // If no measurement found, treat as single item
+            let cleanName = cleanIngredientName(cleanString)
+            let category = determineCategory(cleanName)
+            return Ingredient(name: cleanName, amount: 1.0, unit: "piece", category: category)
+        }
+        
+        let amountRange = match.range(at: 1)
+        let unitRange = match.range(at: 2)
+        let nameRange = match.range(at: 3)
+        
+        guard let amountString = Range(amountRange, in: cleanString).map({ String(cleanString[$0]) }),
+              let nameString = Range(nameRange, in: cleanString).map({ String(cleanString[$0]) }) else {
+            return nil
+        }
+        
+        let amount = parseAmount(amountString)
+        
+        let unit: String
+        if unitRange.location != NSNotFound,
+           let unitString = Range(unitRange, in: cleanString).map({ String(cleanString[$0]) }) {
+            unit = standardizeUnit(unitString)
+        } else {
+            unit = "piece"
+        }
+        
+        let cleanName = cleanIngredientName(nameString)
+        let category = determineCategory(cleanName)
+        
+        return Ingredient(name: cleanName, amount: amount, unit: unit, category: category)
     }
     
     private func fetchWebpageContent(from url: String) async throws -> String {
@@ -225,6 +725,8 @@ class LLMService: ObservableObject {
     
     private func createRecipeParsingPrompt(ingredientContent: String) -> String {
         return """
+        Respond ONLY with a JSON object. Do not include markdown, explanation, or formatting.
+
         Parse ingredients into {"ingredients":[{"name":X,"amount":Y,"unit":Z,"category":C}]}
 
         Rules:
@@ -233,29 +735,16 @@ class LLMService: ObservableObject {
         3. unit: Standardize to full words (default to "piece" if no unit)
         4. category: Must be one of [Produce, Meat & Seafood, Deli, Bakery, Frozen, Pantry, Dairy, Beverages]
 
-        Examples showing exact expected output:
-        "2 1/2 tbsp finely chopped fresh basil"
-        {"name":"basil","amount":2.5,"unit":"tablespoons","category":"Produce"}
+        Examples:
+        "2 1/2 tbsp finely chopped fresh basil" → {"name":"basil","amount":2.5,"unit":"tablespoons","category":"Produce"}
+        "1 (14.5 oz) can diced tomatoes, drained" → {"name":"tomatoes","amount":14.5,"unit":"ounces","category":"Pantry"}
+        "3 large cloves garlic, minced" → {"name":"garlic","amount":3,"unit":"large cloves","category":"Produce"}
+        "1 lb medium shrimp (31-40 count), peeled and deveined" → {"name":"shrimp","amount":1,"unit":"pound","category":"Meat & Seafood"}
+        "crispy shallots" → {"name":"crispy shallots","amount":1,"unit":"piece","category":"Produce"}
+        "1/2 cup dry white wine" → {"name":"white wine","amount":0.5,"unit":"cup","category":"Beverages"}
+        "1/4 cup fresh lemon juice" → {"name":"lemon juice","amount":0.25,"unit":"cup","category":"Produce"}
 
-        "1 (14.5 oz) can diced tomatoes, drained"
-        {"name":"tomatoes","amount":14.5,"unit":"ounces","category":"Pantry"}
-
-        "3 large cloves garlic, minced"
-        {"name":"garlic","amount":3,"unit":"large cloves","category":"Produce"}
-
-        "1 lb medium shrimp (31-40 count), peeled and deveined"
-        {"name":"shrimp","amount":1,"unit":"pound","category":"Meat & Seafood"}
-
-        "crispy shallots"
-        {"name":"crispy shallots","amount":1,"unit":"piece","category":"Produce"}
-
-        "1/2 cup dry white wine"
-        {"name":"white wine","amount":0.5,"unit":"cup","category":"Beverages"}
-
-        "1/4 cup fresh lemon juice"
-        {"name":"lemon juice","amount":0.25,"unit":"cup","category":"Produce"}
-
-        Now parse exactly as shown:
+        Parse these ingredients:
         \(ingredientContent)
         """
     }
@@ -321,7 +810,7 @@ class LLMService: ObservableObject {
             // Clean up the JSON string
             var cleanedJsonString = response
             
-            // Remove markdown code blocks if present
+            // Remove markdown code blocks if present (should be rare with new prompt)
             if cleanedJsonString.contains("```json") {
                 if let startRange = cleanedJsonString.range(of: "```json"),
                    let endRange = cleanedJsonString.range(of: "```", range: startRange.upperBound..<cleanedJsonString.endIndex) {
