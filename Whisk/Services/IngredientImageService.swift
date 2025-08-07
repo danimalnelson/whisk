@@ -6,11 +6,11 @@ final class IngredientImageService {
     static let shared = IngredientImageService()
 
     /// Base URL for ingredient images. Replace with your CDN.
-    private let baseURLString = "https://cdn.whisk.app/ingredients"
+    private var baseURLString: String { Config.ingredientImageBaseURL }
 
     /// Known aliases mapping non-canonical names to canonical slugs.
     /// Extend this list over time or fetch remotely.
-    private let aliasMap: [String: String] = [
+    private var aliasMap: [String: String] = [
         // Herbs & greens
         "scallion": "green-onion",
         "scallions": "green-onion",
@@ -48,11 +48,28 @@ final class IngredientImageService {
 
     /// Cache to prevent repeated prefetch for the same slug.
     private var prefetchedSlugs = Set<String>()
+    private var remoteAliasLoaded = false
 
     private init() {}
 
+    /// Optionally load a remote alias map JSON from the bundle or network.
+    func loadRemoteAliasesIfNeeded() {
+        guard !remoteAliasLoaded else { return }
+        remoteAliasLoaded = true
+        // Attempt to load `ingredient_aliases.json` from bundle first
+        if let url = Bundle.main.url(forResource: "ingredient_aliases", withExtension: "json"),
+           let data = try? Data(contentsOf: url),
+           let dict = try? JSONSerialization.jsonObject(with: data) as? [String: String] {
+            // Merge, prefer remote entries
+            for (k, v) in dict { aliasMap[k.lowercased()] = v }
+            return
+        }
+        // Optionally: fetch from network (placeholder; no-op by default)
+    }
+
     /// Returns a URL for the given ingredient name.
     func url(for ingredientName: String) -> URL? {
+        loadRemoteAliasesIfNeeded()
         let slug = slug(from: ingredientName)
         let urlString = "\(baseURLString)/\(slug).webp"
         return URL(string: urlString)
@@ -60,6 +77,7 @@ final class IngredientImageService {
 
     /// Create a canonical slug from a possibly noisy ingredient name.
     func slug(from name: String) -> String {
+        loadRemoteAliasesIfNeeded()
         let lower = name.lowercased()
 
         // Quick alias override if full string matches
