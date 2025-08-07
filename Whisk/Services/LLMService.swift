@@ -110,7 +110,7 @@ class LLMService: ObservableObject {
            regexParsedIngredients.count >= 3 {
             print("✅ Successfully parsed \(regexParsedIngredients.count) ingredients with regex - skipping LLM call!")
             performanceStats.recordRegexSuccess()
-            let recipe = Recipe(url: url)
+            var recipe = Recipe(url: url)
             recipe.ingredients = regexParsedIngredients
             recipe.isParsed = true
             
@@ -232,7 +232,7 @@ class LLMService: ObservableObject {
                 return nil
             }
             
-            let recipe = Recipe(url: originalURL)
+            var recipe = Recipe(url: originalURL)
             
             // Extract recipe name
             if let name = recipeData["name"] as? String {
@@ -296,13 +296,25 @@ class LLMService: ObservableObject {
         let lines = content.components(separatedBy: .newlines)
         var ingredients: [Ingredient] = []
         
-        // Enhanced regex pattern for ingredient parsing
-        let ingredientPattern = #"(?i)(\d+[\d\/\s\.]*)\s*(cup|tsp|tbsp|oz|pound|grams?|ml|clove|piece|pieces|can|cans|jar|jars|bottle|bottles|package|packages|bag|bags|bunch|bunches|head|heads|slice|slices|small|medium|large|extra\s*large|xl)?\s*(.*)"#
+        // More precise regex pattern for actual ingredients only
+        let ingredientPattern = #"(?i)(\d+[\d\/\s\.]*)\s*(cup|cups|tsp|teaspoon|teaspoons|tbsp|tablespoon|tablespoons|oz|ounce|ounces|pound|pounds|gram|grams|ml|clove|cloves|piece|pieces|can|cans|jar|jars|bottle|bottles|package|packages|bag|bags|bunch|bunches|head|heads|slice|slices|small|medium|large|extra\s*large|xl)\s+([^,\.]+?)(?:\s*\([^)]*\))?(?:\s*,\s*[^,]*)?$"#
         
         guard let regex = try? NSRegularExpression(pattern: ingredientPattern, options: [.caseInsensitive]) else {
             print("❌ Failed to create regex pattern")
             return nil
         }
+        
+        // Keywords that indicate this is NOT an ingredient (cooking instructions, etc.)
+        let nonIngredientKeywords = [
+            "minute", "minutes", "second", "seconds", "hour", "hours", "cook", "cooking", "heat", "heated",
+            "simmer", "boil", "fry", "bake", "roast", "grill", "stir", "mix", "blend", "whisk",
+            "strain", "drain", "press", "squeeze", "chop", "slice", "dice", "mince", "grate",
+            "until", "until just", "until lightly", "until golden", "until tender", "until cooked",
+            "over medium", "over high", "over low", "in a", "in the", "on a", "on the",
+            "carefully", "gently", "slowly", "quickly", "immediately", "transfer", "serve",
+            "season", "seasoning", "salt and pepper", "to taste", "divided", "reserved",
+            "cooled", "heated", "warmed", "chilled", "frozen", "thawed", "room temperature"
+        ]
         
         for line in lines {
             let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -319,6 +331,44 @@ class LLMService: ObservableObject {
                     if let amountString = Range(amountRange, in: trimmedLine).map({ String(trimmedLine[$0]) }),
                        let nameString = Range(nameRange, in: trimmedLine).map({ String(trimmedLine[$0]) }) {
                         
+                        // Check if this looks like an actual ingredient (not cooking instructions)
+                        let cleanName = nameString.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let lowercasedName = cleanName.lowercased()
+                        
+                        // Skip if it contains non-ingredient keywords
+                        var isNonIngredient = false
+                        for keyword in nonIngredientKeywords {
+                            if lowercasedName.contains(keyword.lowercased()) {
+                                isNonIngredient = true
+                                print("🚫 Skipping non-ingredient: \(cleanName) (contains '\(keyword)')")
+                                break
+                            }
+                        }
+                        
+                        if isNonIngredient {
+                            continue
+                        }
+                        
+                        // Additional validation: ingredient names should be reasonable length
+                        if cleanName.count < 3 || cleanName.count > 50 {
+                            print("🚫 Skipping invalid ingredient name length: \(cleanName)")
+                            continue
+                        }
+                        
+                        // Skip if it looks like a cooking instruction (contains verbs)
+                        let cookingVerbs = ["cook", "heat", "stir", "mix", "blend", "whisk", "strain", "drain", "press", "squeeze", "chop", "slice", "dice", "mince", "grate", "season", "transfer", "serve"]
+                        for verb in cookingVerbs {
+                            if lowercasedName.contains(verb) {
+                                print("🚫 Skipping cooking instruction: \(cleanName) (contains '\(verb)')")
+                                isNonIngredient = true
+                                break
+                            }
+                        }
+                        
+                        if isNonIngredient {
+                            continue
+                        }
+                        
                         // Parse amount (handle fractions)
                         let amount = parseAmount(amountString)
                         
@@ -331,16 +381,31 @@ class LLMService: ObservableObject {
                             unit = "piece"
                         }
                         
-                        // Clean ingredient name
-                        let cleanName = cleanIngredientName(nameString)
+                        // Clean ingredient name - remove measurement units and parentheses
+                        var cleanIngredientName = cleanIngredientName(cleanName)
+                        
+                        // Remove measurement units in parentheses like "(30 g)", "(20 g)", etc.
+                        cleanIngredientName = cleanIngredientName.replacingOccurrences(of: #"\s*\([^)]*\)"#, with: "", options: .regularExpression)
+                        
+                        // Remove measurement units that might be at the start
+                        cleanIngredientName = cleanIngredientName.replacingOccurrences(of: #"^[^a-zA-Z]*"#, with: "", options: .regularExpression)
+                        
+                        // Remove trailing measurement units
+                        cleanIngredientName = cleanIngredientName.replacingOccurrences(of: #"\s*\([^)]*\)\s*$"#, with: "", options: .regularExpression)
+                        
+                        // Remove "from 1 small head" type phrases (but preserve "shredded")
+                        cleanIngredientName = cleanIngredientName.replacingOccurrences(of: #"\s+from\s+\d+\s+[^,]*"#, with: "", options: .regularExpression)
+                        
+                        // Clean up extra whitespace
+                        cleanIngredientName = cleanIngredientName.trimmingCharacters(in: .whitespacesAndNewlines)
                         
                         // Determine category
-                        let category = determineCategory(cleanName)
+                        let category = determineCategory(cleanIngredientName)
                         
-                        let ingredient = Ingredient(name: cleanName, amount: amount, unit: unit, category: category)
+                        let ingredient = Ingredient(name: cleanIngredientName, amount: amount, unit: unit, category: category)
                         ingredients.append(ingredient)
                         
-                        print("📋 Regex parsed: \(cleanName) - \(amount) \(unit) (\(category))")
+                        print("📋 Regex parsed: \(cleanIngredientName) - \(amount) \(unit) (\(category))")
                     }
                 }
             }
@@ -501,7 +566,20 @@ class LLMService: ObservableObject {
               let match = regex.firstMatch(in: cleanString, options: [], range: NSRange(cleanString.startIndex..., in: cleanString)),
               match.numberOfRanges >= 4 else {
             // If no measurement found, treat as single item
-            let cleanName = cleanIngredientName(cleanString)
+            var cleanName = cleanIngredientName(cleanString)
+            
+            // Remove measurement units in parentheses like "(30 g)", "(20 g)", etc.
+            cleanName = cleanName.replacingOccurrences(of: #"\s*\([^)]*\)"#, with: "", options: .regularExpression)
+            
+            // Remove measurement units that might be at the start
+            cleanName = cleanName.replacingOccurrences(of: #"^[^a-zA-Z]*"#, with: "", options: .regularExpression)
+            
+            // Remove trailing measurement units
+            cleanName = cleanName.replacingOccurrences(of: #"\s*\([^)]*\)\s*$"#, with: "", options: .regularExpression)
+            
+            // Clean up extra whitespace
+            cleanName = cleanName.trimmingCharacters(in: .whitespacesAndNewlines)
+            
             let category = determineCategory(cleanName)
             return Ingredient(name: cleanName, amount: 1.0, unit: "piece", category: category)
         }
@@ -558,10 +636,22 @@ class LLMService: ObservableObject {
         let startTime = CFAbsoluteTimeGetCurrent()
         var textContent = ""
         
-        // Extract only lines that contain measurements
+        // Extract only lines that contain measurements AND look like ingredients
         let lines = htmlString.components(separatedBy: .newlines)
         var ingredientLines: [String] = []
         var timings: [String: Double] = [:]
+        
+        // Keywords that indicate cooking instructions (not ingredients)
+        let cookingKeywords = [
+            "minute", "minutes", "second", "seconds", "hour", "hours", "cook", "cooking", "heat", "heated",
+            "simmer", "boil", "fry", "bake", "roast", "grill", "stir", "mix", "blend", "whisk",
+            "strain", "drain", "press", "squeeze", "chop", "slice", "dice", "mince", "grate",
+            "until", "until just", "until lightly", "until golden", "until tender", "until cooked",
+            "over medium", "over high", "over low", "in a", "in the", "on a", "on the",
+            "carefully", "gently", "slowly", "quickly", "immediately", "transfer", "serve",
+            "season", "seasoning", "salt and pepper", "to taste", "divided", "reserved",
+            "cooled", "heated", "warmed", "chilled", "frozen", "thawed", "room temperature"
+        ]
         
         for line in lines {
             let cleanLine = line
@@ -580,15 +670,30 @@ class LLMService: ObservableObject {
             
             if !cleanLine.isEmpty {
                 let lowercasedLine = cleanLine.lowercased()
-                // Only keep lines with measurements
-                if lowercasedLine.contains("cup") || lowercasedLine.contains("tablespoon") || 
-                   lowercasedLine.contains("teaspoon") || lowercasedLine.contains("ounce") || 
-                   lowercasedLine.contains("pound") || lowercasedLine.contains("gram") ||
-                   lowercasedLine.contains("clove") || lowercasedLine.contains("medium") ||
-                   lowercasedLine.contains("small") || lowercasedLine.contains("large") ||
-                   lowercasedLine.contains("ml") || lowercasedLine.contains("g ") ||
-                   lowercasedLine.contains("kg") || lowercasedLine.contains("l ") ||
-                   lowercasedLine.contains("tbsp") || lowercasedLine.contains("tsp") {
+                
+                // Skip lines that are clearly cooking instructions
+                var isCookingInstruction = false
+                for keyword in cookingKeywords {
+                    if lowercasedLine.contains(keyword.lowercased()) {
+                        isCookingInstruction = true
+                        break
+                    }
+                }
+                
+                if isCookingInstruction {
+                    continue
+                }
+                
+                // Only keep lines with measurements AND reasonable length
+                if (lowercasedLine.contains("cup") || lowercasedLine.contains("tablespoon") || 
+                    lowercasedLine.contains("teaspoon") || lowercasedLine.contains("ounce") || 
+                    lowercasedLine.contains("pound") || lowercasedLine.contains("gram") ||
+                    lowercasedLine.contains("clove") || lowercasedLine.contains("medium") ||
+                    lowercasedLine.contains("small") || lowercasedLine.contains("large") ||
+                    lowercasedLine.contains("ml") || lowercasedLine.contains("g ") ||
+                    lowercasedLine.contains("kg") || lowercasedLine.contains("l ") ||
+                    lowercasedLine.contains("tbsp") || lowercasedLine.contains("tsp")) &&
+                   cleanLine.count > 10 && cleanLine.count < 200 {
                     ingredientLines.append(cleanLine)
                 }
             }
