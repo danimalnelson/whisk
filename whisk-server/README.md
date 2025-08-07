@@ -53,3 +53,11 @@ Run locally:
 ```bash
 npx vercel dev
 ``` 
+
+## Static ingredient images
+
+Serve images from `public/ingredients/` with filenames matching iOS slugs, e.g., `tarragon.webp`, `green-onion.webp`.
+
+Headers for `/ingredients/*` are set in `vercel.json` to `Cache-Control: public, max-age=31536000, immutable`.
+
+Recommended sizes: 60×90 (2x for 30×45 display) or 90×135 (@3x). Use WebP.
