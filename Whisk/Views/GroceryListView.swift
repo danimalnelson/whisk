@@ -48,10 +48,10 @@ struct GroceryListView: View {
     @ObservedObject var dataManager: DataManager
     @State private var showingCreateList = false
     @State private var newListName = ""
-    @State private var navigateToNewList: GroceryList?
+    @State private var navigationPath = NavigationPath()
     
     var body: some View {
-        NavigationView {
+        NavigationStack(path: $navigationPath) {
             VStack(spacing: 0) {
                 if dataManager.groceryLists.isEmpty {
                     // Empty State
@@ -80,9 +80,7 @@ struct GroceryListView: View {
                     // List of Grocery Lists
                     List {
                         ForEach(dataManager.groceryLists) { list in
-                            Button(action: {
-                                navigateToNewList = list
-                            }) {
+                            NavigationLink(value: list) {
                                 HStack {
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text(list.name)
@@ -129,16 +127,11 @@ struct GroceryListView: View {
             .background()
             .sheet(isPresented: $showingCreateList) {
                 CreateListView(dataManager: dataManager, isPresented: $showingCreateList, onListCreated: { newList in
-                    navigateToNewList = newList
+                    navigationPath.append(newList)
                 })
             }
-            .navigationDestination(isPresented: Binding(
-                get: { navigateToNewList != nil },
-                set: { if !$0 { navigateToNewList = nil } }
-            )) {
-                if let list = navigateToNewList {
-                    GroceryListDetailView(dataManager: dataManager, list: list)
-                }
+            .navigationDestination(for: GroceryList.self) { list in
+                GroceryListDetailView(dataManager: dataManager, list: list)
             }
         }
     }
