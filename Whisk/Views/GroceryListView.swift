@@ -39,6 +39,11 @@ extension View {
     }
 }
 
+// MARK: - Ingredient Image Helpers
+private func ingredientImageURL(for name: String) -> URL? {
+    IngredientImageService.shared.url(for: name)
+}
+
 struct GroceryListView: View {
     @ObservedObject var dataManager: DataManager
     @State private var showingCreateList = false
@@ -241,6 +246,7 @@ struct GroceryListDetailView: View {
     @State private var showingRecipeInput = false
     @State private var showingRenameList = false
     @Environment(\.dismiss) private var dismiss
+    private let imageService = IngredientImageService.shared
     
     // Get the current version of this list from the DataManager
     private var currentList: GroceryList? {
@@ -299,6 +305,11 @@ struct GroceryListDetailView: View {
                     }
                 }
                 .listStyle(PlainListStyle())
+                .onAppear {
+                    // Prefetch images for this list to smooth scroll experience
+                    let names = currentList.ingredients.map { $0.name }
+                    imageService.prefetch(ingredientNames: names)
+                }
             } else {
                 // Fallback: Show empty state if currentList is nil
                 VStack(spacing: 20) {
@@ -580,7 +591,53 @@ struct IngredientRow: View {
     }
     
     var body: some View {
-        HStack {
+        HStack(spacing: 12) {
+            // Thumbnail on the left
+            AsyncImage(url: ingredientImageURL(for: ingredient.name)) { phase in
+                switch phase {
+                case .empty:
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color(.secondarySystemFill))
+                        .frame(width: 30, height: 45)
+                case .success(let image):
+                    image
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 30, height: 45)
+                        .clipped()
+                        .cornerRadius(6)
+                        .transition(.opacity.combined(with: .scale))
+                case .failure:
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color(.secondarySystemFill))
+                        .overlay(
+                            Image(systemName: "leaf")
+                                .foregroundColor(.secondary)
+                        )
+                        .frame(width: 30, height: 45)
+                @unknown default:
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color(.secondarySystemFill))
+                        .frame(width: 30, height: 45)
+                }
+            }
+            .accessibilityLabel(Text("\(formatIngredientName(ingredient.name, amount: ingredient.amount)) image"))
+
+            // Text content
+            VStack(alignment: .leading, spacing: 2) {
+                Text(formatIngredientName(ingredient.name, amount: ingredient.amount))
+                    .font(.system(size: 16, weight: .regular))
+                    .strikethrough(ingredient.isChecked)
+                    .foregroundColor(ingredient.isChecked ? .secondary : .primary)
+
+                Text(formatAmountAndUnit(amount: ingredient.amount, unit: ingredient.unit))
+                    .font(.system(size: 14, weight: .regular))
+                    .foregroundColor(.secondary)
+            }
+
+            Spacer()
+
+            // Checkbox moved to the right
             Button(action: {
                 dataManager.toggleIngredientChecked(ingredient, in: list)
             }) {
@@ -589,21 +646,10 @@ struct IngredientRow: View {
                     .font(.title3)
             }
             .buttonStyle(PlainButtonStyle())
-            
-            VStack(alignment: .leading, spacing: 2) {
-                Text(formatIngredientName(ingredient.name, amount: ingredient.amount))
-                    .font(.system(size: 16, weight: .regular))
-                    .strikethrough(ingredient.isChecked)
-                    .foregroundColor(ingredient.isChecked ? .secondary : .primary)
-                
-                Text(formatAmountAndUnit(amount: ingredient.amount, unit: ingredient.unit))
-                    .font(.system(size: 14, weight: .regular))
-                    .foregroundColor(.secondary)
-            }
-            
-            Spacer()
+            .accessibilityLabel(Text(ingredient.isChecked ? "Uncheck" : "Check"))
+            .accessibilityHint(Text("Marks ingredient as completed"))
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 6)
     }
 }
 

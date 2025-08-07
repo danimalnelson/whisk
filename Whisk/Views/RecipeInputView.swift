@@ -249,6 +249,10 @@ struct RecipeInputView: View {
         } else {
             dataManager.addIngredientsToCurrentList(ingredients)
         }
+
+        // Prefetch ingredient images to improve subsequent list performance
+        let names = ingredients.map { $0.name }
+        IngredientImageService.shared.prefetch(ingredientNames: names)
     }
 }
 
