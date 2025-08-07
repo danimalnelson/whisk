@@ -53,7 +53,7 @@ async function parseRecipe(url) {
   if (extractedIngredients.length === 0) {
     console.log('❌ No ingredients extracted from HTML, trying fallback extraction...');
     // Try a more aggressive extraction
-    const fallbackIngredients = extractIngredientsFallback(htmlContent);
+    const fallbackIngredients = extractIngredientsFallback(cleanTextContent);
     console.log('Fallback extracted ingredients count:', fallbackIngredients.length);
     if (fallbackIngredients.length > 0) {
       extractedIngredients.push(...fallbackIngredients);
@@ -61,7 +61,8 @@ async function parseRecipe(url) {
   }
   
   // 3. Extract recipe title from HTML
-  const recipeTitle = extractRecipeTitle(htmlContent);
+  const cleanTextContent = extractCleanText(htmlContent);
+  const recipeTitle = extractRecipeTitle(cleanTextContent);
   console.log('Extracted recipe title:', recipeTitle || 'Not found');
   
   // 4. Create prompt for LLM
@@ -138,8 +139,12 @@ async function fetchWebpageContent(url) {
   console.log('📄 Raw HTML length:', htmlString.length);
   console.log('📄 First 500 chars:', htmlString.substring(0, 500));
   
-  // Enhanced approach: Extract text while preserving ingredient information
-  let textContent = htmlString
+  return htmlString; // Return raw HTML for proper parsing
+}
+
+// Helper function to extract clean text from HTML
+function extractCleanText(htmlString) {
+  return htmlString
     .replace(/<[^>]+>/g, ' ') // Replace tags with spaces instead of removing
     .replace(/&nbsp;/g, ' ')
     .replace(/&amp;/g, '&')
@@ -152,8 +157,6 @@ async function fetchWebpageContent(url) {
     .replace(/&mdash;/g, "—")
     .replace(/&ndash;/g, "–")
     .replace(/\s+/g, ' '); // Normalize whitespace
-  
-  return textContent;
 }
 
 function extractIngredientsFromHTML(htmlString) {
