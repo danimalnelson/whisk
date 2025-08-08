@@ -297,7 +297,7 @@ class LLMService: ObservableObject {
         var ingredients: [Ingredient] = []
         
         // More precise regex pattern for actual ingredients only
-        let ingredientPattern = #"(?i)(\d+[\d\/\s\.]*)\s*(cup|cups|tsp|teaspoon|teaspoons|tbsp|tablespoon|tablespoons|oz|ounce|ounces|pound|pounds|gram|grams|ml|clove|cloves|piece|pieces|can|cans|jar|jars|bottle|bottles|package|packages|bag|bags|bunch|bunches|head|heads|slice|slices|small|medium|large|extra\s*large|xl)\s+([^,\.]+?)(?:\s*\([^)]*\))?(?:\s*,\s*[^,]*)?$"#
+        let ingredientPattern = #"(?i)(\d+[\d\/\s\.]*)\s*(cup|cups|tsp|teaspoon|teaspoons|tbsp|tablespoon|tablespoons|oz|ounce|ounces|pound|pounds|gram|grams|ml|clove|cloves|sprig|sprigs|piece|pieces|can|cans|jar|jars|bottle|bottles|package|packages|bag|bags|bunch|bunches|head|heads|slice|slices|small|medium|large|extra\s*large|xl)\s+([^,\.]+?)(?:\s*\([^)]*\))?(?:\s*,\s*[^,]*)?$"#
         
         guard let regex = try? NSRegularExpression(pattern: ingredientPattern, options: [.caseInsensitive]) else {
             print("❌ Failed to create regex pattern")
@@ -396,6 +396,10 @@ class LLMService: ObservableObject {
                         // Remove "from 1 small head" type phrases (but preserve "shredded")
                         cleanIngredientName = cleanIngredientName.replacingOccurrences(of: #"\s+from\s+\d+\s+[^,]*"#, with: "", options: .regularExpression)
                         
+                        // If comma descriptors exist, keep only the main name before the first comma
+                        if let commaIndex = cleanIngredientName.firstIndex(of: ",") {
+                            cleanIngredientName = String(cleanIngredientName[..<commaIndex])
+                        }
                         // Clean up extra whitespace
                         cleanIngredientName = cleanIngredientName.trimmingCharacters(in: .whitespacesAndNewlines)
                         
@@ -688,7 +692,7 @@ class LLMService: ObservableObject {
                 if (lowercasedLine.contains("cup") || lowercasedLine.contains("tablespoon") || 
                     lowercasedLine.contains("teaspoon") || lowercasedLine.contains("ounce") || 
                     lowercasedLine.contains("pound") || lowercasedLine.contains("gram") ||
-                    lowercasedLine.contains("clove") || lowercasedLine.contains("medium") ||
+                    lowercasedLine.contains("clove") || lowercasedLine.contains("sprig") || lowercasedLine.contains("sprigs") || lowercasedLine.contains("medium") ||
                     lowercasedLine.contains("small") || lowercasedLine.contains("large") ||
                     lowercasedLine.contains("ml") || lowercasedLine.contains("g ") ||
                     lowercasedLine.contains("kg") || lowercasedLine.contains("l ") ||

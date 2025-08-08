@@ -102,6 +102,7 @@ final class IngredientImageService {
         if let alias = aliasMap[joined] { return alias }
 
         let singular = IngredientImageService.singularize(joined)
+            .replacingOccurrences(of: "asparagu", with: "asparagus")
         return singular.replacingOccurrences(of: " ", with: "-")
     }
 
