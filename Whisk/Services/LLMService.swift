@@ -758,7 +758,10 @@ class LLMService: ObservableObject {
                                         if item.contains("cup") || item.contains("tablespoon") || 
                                            item.contains("teaspoon") || item.contains("ounce") || 
                                            item.contains("pound") || item.contains("gram") ||
-                                           item.contains("clove") || item.contains("medium") ||
+                                           item.contains("clove") || item.contains("sprig") || item.contains("sprigs") ||
+                                           item.contains("stalk") || item.contains("stalks") ||
+                                           item.contains("leaf") || item.contains("leaves") ||
+                                           item.contains("medium") ||
                                            item.contains("small") || item.contains("large") {
                                             hasMeasurement = true
                                         }
