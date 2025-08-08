@@ -320,6 +320,7 @@ class LLMService: ObservableObject {
             let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmedLine.isEmpty { continue }
             
+            var handled = false
             let matches = regex.matches(in: trimmedLine, options: [], range: NSRange(trimmedLine.startIndex..., in: trimmedLine))
             
             for match in matches {
@@ -419,6 +420,35 @@ class LLMService: ObservableObject {
                         ingredients.append(ingredient)
                         
                         print("📋 Regex parsed: \(cleanIngredientName) - \(amount) \(unit) (\(category))")
+                        handled = true
+                    }
+                }
+            }
+
+            // Fallback: herb pattern like "3 sprigs tarragon, leaves finely minced"
+            if !handled {
+                let herbPattern = #"(?i)^\s*(\d+[\d\/\s\.]*)\s*(sprig|sprigs|leaf|leaves|stalk|stalks)\s+(?:of\s+)?([^,\.]+)"#
+                if let herbRegex = try? NSRegularExpression(pattern: herbPattern, options: []) {
+                    let herbMatches = herbRegex.matches(in: trimmedLine, options: [], range: NSRange(trimmedLine.startIndex..., in: trimmedLine))
+                    if let m = herbMatches.first, m.numberOfRanges >= 4,
+                       let amountRange = Range(m.range(at: 1), in: trimmedLine),
+                       let unitRange = Range(m.range(at: 2), in: trimmedLine),
+                       let nameRange = Range(m.range(at: 3), in: trimmedLine) {
+                        let amount = parseAmount(String(trimmedLine[amountRange]))
+                        var unit = String(trimmedLine[unitRange])
+                        var name = String(trimmedLine[nameRange])
+                        // strip anything after comma in name
+                        if let commaIndex = name.firstIndex(of: ",") { name = String(name[..<commaIndex]) }
+                        name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                        var cleaned = cleanIngredientName(name)
+                        if unit.lowercased().contains("sprig") { cleaned = (cleaned + " " + (amount == 1 ? "sprig" : "sprigs")).trimmingCharacters(in: .whitespaces) ; unit = "" }
+                        if unit.lowercased().contains("leaf") { cleaned = (cleaned + " " + (amount == 1 ? "leaf" : "leaves")).trimmingCharacters(in: .whitespaces) ; unit = "" }
+                        if unit.lowercased().contains("stalk") { cleaned = (cleaned + " " + (amount == 1 ? "stalk" : "stalks")).trimmingCharacters(in: .whitespaces) ; unit = "" }
+                        let category = determineCategory(cleaned)
+                        let ingredient = Ingredient(name: cleaned, amount: amount, unit: unit, category: category)
+                        ingredients.append(ingredient)
+                        print("🌿 Herb parsed: \(cleaned) - \(amount) \(unit) (\(category))")
+                        handled = true
                     }
                 }
             }
