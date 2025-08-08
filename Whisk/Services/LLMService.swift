@@ -373,7 +373,7 @@ class LLMService: ObservableObject {
                         let amount = parseAmount(amountString)
                         
                         // Parse unit
-                        let unit: String
+                        var unit: String
                         if unitRange.location != NSNotFound,
                            let unitString = Range(unitRange, in: trimmedLine).map({ String(trimmedLine[$0]) }) {
                             unit = standardizeUnit(unitString)
@@ -400,6 +400,15 @@ class LLMService: ObservableObject {
                         if let commaIndex = cleanIngredientName.firstIndex(of: ",") {
                             cleanIngredientName = String(cleanIngredientName[..<commaIndex])
                         }
+                        // If the unit is sprig/sprigs, fold it into the name and clear the unit
+                        if unit.lowercased().contains("sprig") {
+                            let sprigWord = (amount == 1.0 ? "sprig" : "sprigs")
+                            if !cleanIngredientName.lowercased().contains("sprig") {
+                                cleanIngredientName = (cleanIngredientName + " " + sprigWord).trimmingCharacters(in: .whitespaces)
+                            }
+                            unit = ""
+                        }
+
                         // Clean up extra whitespace
                         cleanIngredientName = cleanIngredientName.trimmingCharacters(in: .whitespacesAndNewlines)
                         
