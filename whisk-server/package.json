@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
+    "prebuild": "node scripts/sync-ingredient-slugs.js",
+    "build": "echo 'No build step'",
+    "sync-images": "node scripts/sync-ingredient-slugs.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
