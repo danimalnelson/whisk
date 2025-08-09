@@ -2772,22 +2772,71 @@ class LLMService: ObservableObject {
     
     // Special category overrides (priority order)
     private let categoryOverrides: [(String, GroceryCategory)] = [
+        // Pantry-first: oils
+        ("olive oil", .pantry),
+        ("vegetable oil", .pantry),
+        ("canola oil", .pantry),
+        ("avocado oil", .pantry),
+        ("grapeseed oil", .pantry),
+        ("peanut oil", .pantry),
+        ("sesame oil", .pantry),
+        ("coconut oil", .pantry),
+        ("sunflower oil", .pantry),
+        ("safflower oil", .pantry),
+        ("corn oil", .pantry),
+        ("oil", .pantry), // generic catch-all for cooking oils
+
+        // Pantry: common spices that could collide with Produce keywords
+        ("peppercorn", .pantry),
+        ("peppercorns", .pantry),
+        ("black pepper", .pantry),
+        ("ground pepper", .pantry),
+        ("ground black pepper", .pantry),
+        ("miso", .pantry),
         ("vinegar", .pantry),
+
+        // Produce: specific juices and items
         ("lemon juice", .produce)
     ]
     
     // Category keywords for classification
     private let categoryKeywords: [GroceryCategory: Set<String>] = [
-        .produce: ["tomato", "tomatoes", "onion", "onions", "garlic", "lettuce", "carrot", "carrots", 
-                  "pepper", "peppers", "cucumber", "basil", "herb", "herbs", "vegetable", "vegetables",
-                  "fruit", "fruits", "lemon", "lime", "orange", "apple", "banana", "berry", "berries"],
+        .produce: [
+            // Common vegetables/fruits
+            "tomato", "tomatoes", "onion", "onions", "shallot", "shallots", "garlic", "lettuce",
+            "carrot", "carrots", "pepper", "peppers", "cucumber", "asparagus",
+            "lemon", "lime", "orange", "apple", "banana", "berry", "berries",
+
+            // Herbs
+            "basil", "tarragon", "cilantro", "parsley", "thyme", "rosemary", "sage", "dill",
+            "chive", "chives", "scallion", "scallions", "green onion", "green onions",
+            "herb", "herbs",
+
+            // General groupings
+            "vegetable", "vegetables", "fruit", "fruits"
+        ],
         .meatAndSeafood: ["chicken", "beef", "pork", "fish", "salmon", "shrimp", "meat", "steak", 
                          "turkey", "lamb", "seafood", "tuna", "cod", "sausage"],
         .deli: ["ham", "salami", "prosciutto", "deli", "cold cut", "cold cuts", "genoa"],
         .bakery: ["bread", "roll", "rolls", "bun", "buns", "bagel", "muffin", "cake", "pastry"],
         .frozen: ["frozen", "ice cream", "ice", "freezer"],
-        .pantry: ["flour", "sugar", "salt", "spice", "spices", "oil", "sauce", "pasta", 
-                 "rice", "bean", "beans", "canned", "dry", "dried"],
+        .pantry: [
+            // Baking & staples
+            "flour", "sugar", "salt", "sauce", "pasta", "rice", "bean", "beans", "canned",
+            
+            // Spices & seasonings
+            "spice", "spices", "peppercorn", "peppercorns", "seasoning", "seasonings",
+
+            // Oils & fats
+            "oil", "olive oil", "vegetable oil", "canola oil", "avocado oil", "grapeseed oil",
+            "peanut oil", "sesame oil", "coconut oil", "sunflower oil", "safflower oil", "corn oil",
+
+            // Dry goods
+            "dry", "dried",
+
+            // Ferments/condiments
+            "miso", "vinegar"
+        ],
         .dairy: ["milk", "cream", "yogurt", "butter", "mozzarella", "cheese", "egg", "eggs"],
         .beverages: ["water", "juice", "soda", "drink", "beverage", "wine", "beer", "liquor", "spirits"]
     ]

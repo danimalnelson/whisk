@@ -9,7 +9,7 @@ enum Config {
             return value
         }
         // Default; replace with your CDN
-        return "https://cdn.whisk.app/ingredients"
+        return "https://whisk-server-git-ingredient-images-dannelson.vercel.app/ingredients"
     }
 }
 

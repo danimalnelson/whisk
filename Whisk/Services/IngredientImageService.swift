@@ -19,6 +19,8 @@ final class IngredientImageService {
         "coriander": "cilantro",
         "coriander leaves": "cilantro",
         "cilantro leaves": "cilantro",
+        // Specific herb forms
+        "tarragon sprigs": "tarragon",
         "capsicum": "bell-pepper",
         "aubergine": "eggplant",
         "courgette": "zucchini",
@@ -43,7 +45,9 @@ final class IngredientImageService {
     private let descriptors: Set<String> = [
         "fresh", "dried", "ripe", "unripe", "organic", "large", "small", "medium",
         "sliced", "diced", "chopped", "minced", "grated", "peeled", "seeded",
-        "thin", "thick", "whole", "raw", "frozen"
+        "thin", "thick", "whole", "raw", "frozen",
+        // Quantity nouns that shouldn't affect the slug
+        "sprig", "sprigs", "bunch", "bunches", "clove", "cloves", "leaf", "leaves", "stalk", "stalks", "stem", "stems"
     ]
 
     /// Cache to prevent repeated prefetch for the same slug.
