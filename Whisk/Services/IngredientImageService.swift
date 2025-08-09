@@ -7,6 +7,8 @@ final class IngredientImageService {
 
     /// Base URL for ingredient images. Replace with your CDN.
     private var baseURLString: String { Config.ingredientImageBaseURL }
+    /// Version to bust caches for ingredient assets when server images change.
+    private var assetsVersion: String { Config.ingredientImageAssetsVersion }
 
     /// Known aliases mapping non-canonical names to canonical slugs.
     /// Extend this list over time or fetch remotely.
@@ -75,7 +77,7 @@ final class IngredientImageService {
     func url(for ingredientName: String) -> URL? {
         loadRemoteAliasesIfNeeded()
         let slug = slug(from: ingredientName)
-        let urlString = "\(baseURLString)/\(slug).webp"
+        let urlString = "\(baseURLString)/\(slug).webp?v=\(assetsVersion)"
         return URL(string: urlString)
     }
 
@@ -126,7 +128,7 @@ final class IngredientImageService {
         guard !newSlugs.isEmpty else { return }
 
         for slug in newSlugs {
-            guard let url = URL(string: "\(baseURLString)/\(slug).webp") else { continue }
+            guard let url = URL(string: "\(baseURLString)/\(slug).webp?v=\(assetsVersion)") else { continue }
             let request = URLRequest(url: url, cachePolicy: .returnCacheDataElseLoad, timeoutInterval: 15)
             let task = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
                 if let data = data, let response = response {
