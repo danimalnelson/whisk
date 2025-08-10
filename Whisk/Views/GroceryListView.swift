@@ -113,32 +113,11 @@ struct GroceryListDetailView: View {
             // Bottom Bar (hidden when empty list)
             if let currentList = currentList, !currentList.ingredients.isEmpty {
                 HStack {
+                    Spacer()
                     Text("\(currentList.ingredients.filter { !$0.isChecked }.count) items remaining")
                         .font(.system(size: 14, weight: .regular))
                         .foregroundColor(.secondary)
-                    
                     Spacer()
-                    
-                    HStack(spacing: 28) {
-                        Button(action: { showingClearConfirm = true }) {
-                            Image(systemName: "eraser")
-                                .font(.title2)
-                                .foregroundColor(.white)
-                        }
-                        
-                        // Share current list contents
-                        ShareLink(item: shareText) {
-                            Image(systemName: "square.and.arrow.up")
-                                .font(.title2)
-                                .foregroundColor(.white)
-                        }
-
-                        Button(action: { showingRecipeInput = true }) {
-                            Image(systemName: "plus")
-                                .font(.title2)
-                                .foregroundColor(.blue)
-                        }
-                    }
                 }
                 .padding(.horizontal, 20)
                 .frame(height: 44)
@@ -165,9 +144,18 @@ struct GroceryListDetailView: View {
         .navigationBarTitleDisplayMode((currentList?.ingredients.isEmpty ?? true) ? .inline : .large)
         .navigationBarBackButtonHidden(true)
         .toolbar {
-            // Single-list flow: no back button to lists
-            
-            // Single-list flow: no rename/delete list actions
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Menu {
+                    Button("Remove All Ingredients?", role: .destructive) {
+                        showingClearConfirm = true
+                    }
+                    ShareLink("Share", item: shareText)
+                    Button("Add from URL") { showingRecipeInput = true }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 20))
+                }
+            }
         }
         .sheet(isPresented: $showingRecipeInput) {
             RecipeInputView(dataManager: dataManager, targetList: currentList)
