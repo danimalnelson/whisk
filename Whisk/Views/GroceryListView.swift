@@ -432,7 +432,6 @@ struct CategoryHeader: View {
             Text("\(remainingCount) items remaining")
                 .font(.system(size: 14, weight: .regular))
                 .foregroundColor(.secondary)
-                .shimmer(remainingCount == 0)
         }
     }
 }
@@ -615,6 +614,7 @@ struct IngredientRow: View {
                 }
             }
             .accessibilityLabel(Text("\(formatIngredientName(ingredient.name, amount: ingredient.amount)) image"))
+            .opacity(ingredient.isChecked ? 0.75 : 1.0)
 
             // Text content
             VStack(alignment: .leading, spacing: 2) {

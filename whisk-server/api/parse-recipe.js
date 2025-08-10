@@ -206,7 +206,7 @@ Rules:
 - Convert all fractions to decimals (e.g., 1/2 → 0.5, 1 1/2 → 1.5)
 - Standardize units: cups, tablespoons, teaspoons, ounces, pounds, grams, etc.
 - Clean ingredient names by removing:
-  - Preparation methods: "halved", "diced", "chopped", "finely chopped", "coarsely chopped", "thinly sliced", "minced", "grated", "shredded", "torn into small pieces", "cut into strips", "julienned", "zested", "torn", "cubed", "mashed", "pureed", "whipped", "beaten", "crushed", "ground"
+  - Preparation methods: "halved", "diced", "chopped", "finely chopped", "coarsely chopped", "roughly chopped", "thinly sliced", "finely sliced", "thickly sliced", "roughly diced", "finely diced", "minced", "grated", "shredded", "torn into small pieces", "cut into strips", "julienned", "zested", "torn", "cubed", "mashed", "pureed", "whipped", "beaten", "crushed"
   - Cooking states: "crispy", "toasted", "roasted", "grilled", "fried", "sautéed", "baked", "broiled", "steamed", "poached", "seared", "caramelized", "blanched", "boiled", "pickled", "smoked", "marinated", "candied", "melted", "softened", "thawed", "defrosted"
   - Processing: "peeled", "deveined", "tail-on", "pitted", "seeded", "cored", "trimmed", "stemmed", "skinned", "deboned", "boneless", "skinless", "filleted", "rinsed", "washed", "patted dry", "squeezed", "pressed", "drained"
   - State descriptors: "fresh", "raw", "uncooked", "cold", "warm", "hot", "divided", "separated", "reserved"
@@ -261,6 +261,28 @@ async function callOpenAI(prompt) {
 }
 
 function parseLLMResponse(response, originalURL) {
+  function sanitizeIngredientName(rawName) {
+    if (!rawName || typeof rawName !== 'string') return rawName;
+    let name = rawName;
+
+    // Remove parenthetical descriptors that contain prep terms
+    name = name.replace(/\((?:(?!\)).)*(?:chopped|sliced|diced|minced|grated|shredded|julienned|zested|torn|cubed|mashed|pureed|whipped|beaten|crushed)[^)]*\)/gi, '');
+
+    // Remove trailing or inline descriptors like ", finely chopped" or "- coarsely chopped"
+    name = name.replace(/(?:,|–|-)?\s*(?:finely|roughly|coarsely|thinly|thickly|lightly)?\s*(?:chopped|sliced|diced|minced|grated|shredded|torn|julienned|zested|cubed|mashed|pureed|whipped|beaten|crushed)\b/gi, '');
+
+    // Remove phrases like "torn into small pieces" or "cut into strips"
+    name = name.replace(/\b(?:torn into small pieces|cut into strips)\b/gi, '');
+
+    // Remove leading descriptors like "finely chopped " at the start
+    name = name.replace(/^(?:finely|roughly|coarsely|thinly|thickly|lightly)?\s*(?:chopped|sliced|diced|minced|grated|shredded|torn|julienned|zested|cubed|mashed|pureed|whipped|beaten|crushed)\s+/gi, '');
+
+    // Cleanup: remove duplicate spaces and stray punctuation
+    name = name.replace(/\s{2,}/g, ' ');
+    name = name.replace(/\s*(?:,|;|:|-|–)\s*$/g, '');
+
+    return name.trim();
+  }
   // Extract JSON from the response
   let jsonString = response;
   
@@ -285,7 +307,7 @@ function parseLLMResponse(response, originalURL) {
     url: originalURL,
     name: parsed.recipeName,
     ingredients: parsed.ingredients.map(ing => ({
-      name: ing.name,
+      name: sanitizeIngredientName(ing.name),
       amount: ing.amount,
       unit: ing.unit,
       category: ing.category,
