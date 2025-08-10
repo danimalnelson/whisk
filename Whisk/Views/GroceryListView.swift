@@ -432,7 +432,6 @@ struct CategoryHeader: View {
             Text("\(remainingCount) items remaining")
                 .font(.system(size: 14, weight: .regular))
                 .foregroundColor(.secondary)
-                .shimmer(remainingCount == 0)
         }
     }
 }
