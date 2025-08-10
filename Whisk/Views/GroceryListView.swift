@@ -114,7 +114,8 @@ struct GroceryListDetailView: View {
             if let currentList = currentList, !currentList.ingredients.isEmpty {
                 HStack {
                     Spacer()
-                    Text("\(currentList.ingredients.filter { !$0.isChecked }.count) items remaining")
+                    let remaining = currentList.ingredients.filter { !$0.isChecked }.count
+                    Text(remaining == 1 ? "1 item remaining" : "\(remaining) items remaining")
                         .font(.system(size: 14, weight: .regular))
                         .foregroundColor(.secondary)
                     Spacer()
@@ -146,11 +147,19 @@ struct GroceryListDetailView: View {
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Menu {
-                    Button("Erase list", role: .destructive) {
+                    Button(role: .destructive) {
                         showingClearConfirm = true
+                    } label: {
+                        Label("Erase list", systemImage: "eraser")
                     }
-                    ShareLink("Share list", item: shareText)
-                    Button("Add recipes") { showingRecipeInput = true }
+                    ShareLink(item: shareText) {
+                        Label("Share list", systemImage: "square.and.arrow.up")
+                    }
+                    Button {
+                        showingRecipeInput = true
+                    } label: {
+                        Label("Add recipes", systemImage: "plus")
+                    }
                 } label: {
                     Image(systemName: "ellipsis.circle")
                         .font(.system(size: 20))
@@ -186,6 +195,10 @@ struct CategoryHeader: View {
         ingredients.filter { !$0.isChecked }.count
     }
     
+    private var remainingText: String {
+        remainingCount == 1 ? "1 item remaining" : "\(remainingCount) items remaining"
+    }
+    
     var body: some View {
         HStack {
             Text(category.displayName)
@@ -194,7 +207,7 @@ struct CategoryHeader: View {
             
             Spacer()
             
-            Text("\(remainingCount) items remaining")
+            Text(remainingText)
                 .font(.system(size: 14, weight: .regular))
                 .foregroundColor(.secondary)
         }

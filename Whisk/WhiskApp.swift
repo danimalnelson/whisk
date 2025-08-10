@@ -1,11 +1,29 @@
 import SwiftUI
 import CoreText
+import UIKit
 
 @main
 struct WhiskApp: App {
     init() {
         // Register Inter fonts
         registerInterFonts()
+
+        // Configure navigation bar title font sizes
+        let appearance = UINavigationBarAppearance()
+        appearance.configureWithOpaqueBackground()
+        appearance.backgroundColor = .black
+        appearance.titleTextAttributes = [
+            .font: UIFont.systemFont(ofSize: 18, weight: .bold),
+            .foregroundColor: UIColor.white
+        ]
+        appearance.largeTitleTextAttributes = [
+            .font: UIFont.systemFont(ofSize: 34, weight: .bold),
+            .foregroundColor: UIColor.white
+        ]
+        // Apply appearance to all nav bar states
+        UINavigationBar.appearance().standardAppearance = appearance
+        UINavigationBar.appearance().scrollEdgeAppearance = appearance
+        UINavigationBar.appearance().compactAppearance = appearance
     }
     
     var body: some Scene {
