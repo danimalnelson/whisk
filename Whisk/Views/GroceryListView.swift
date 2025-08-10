@@ -1,44 +1,5 @@
 import SwiftUI
 
-// MARK: - Shimmer Effect
-struct ShimmerEffect: ViewModifier {
-    @State private var phase: CGFloat = 0
-    
-    func body(content: Content) -> some View {
-        content
-            .overlay(
-                LinearGradient(
-                    gradient: Gradient(colors: [
-                        Color.clear,
-                        Color.white.opacity(0.8),
-                        Color.clear
-                    ]),
-                    startPoint: .leading,
-                    endPoint: .trailing
-                )
-                .offset(x: -200 + (phase * 400))
-                .animation(
-                    Animation.linear(duration: 1.4),
-                    value: phase
-                )
-                .blendMode(.overlay)
-            )
-            .onAppear {
-                phase = 1
-            }
-    }
-}
-
-extension View {
-    func shimmer(_ isActive: Bool = true) -> some View {
-        if isActive {
-            return AnyView(modifier(ShimmerEffect()))
-        } else {
-            return AnyView(self)
-        }
-    }
-}
-
 // MARK: - Ingredient Image Helpers
 private func ingredientImageURL(for name: String) -> URL? {
     IngredientImageService.shared.url(for: name)
@@ -58,26 +19,18 @@ struct GroceryListView: View {
     }
 }
 
-// Removed CreateListView for single-list flow
-
-// Removed RenameListView for single-list flow
+// Single-list flow: consolidated into GroceryListView and GroceryListDetailView only
 
 struct GroceryListDetailView: View {
     @ObservedObject var dataManager: DataManager
     let list: GroceryList
     @State private var showingRecipeInput = false
     @State private var showingClearConfirm = false
-    @State private var showingRenameList = false
-    @Environment(\.dismiss) private var dismiss
+    // Single-list flow: no rename/back state
     private let imageService = IngredientImageService.shared
     
-    // Get the current version of this list from the DataManager
-    private var currentList: GroceryList? {
-        let found = dataManager.groceryLists.first { $0.id == list.id }
-        print("🔍 GroceryListDetailView: Looking for list '\(list.name)' (ID: \(list.id))")
-        print("🔍 Found list: \(found?.name ?? "nil") with \(found?.ingredients.count ?? 0) ingredients")
-        return found
-    }
+    // Single-list flow: always use DataManager's current list
+    private var currentList: GroceryList? { dataManager.currentList }
     
     var body: some View {
         VStack(spacing: 0) {
@@ -151,11 +104,6 @@ struct GroceryListDetailView: View {
                         .font(.body)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
-                    
-                    Button("Go Back") {
-                        // This will be handled by navigation
-                    }
-                    .buttonStyle(.borderedProminent)
                 }
                 .padding()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
