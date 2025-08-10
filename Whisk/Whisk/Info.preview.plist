@@ -3,6 +3,6 @@
 <plist version="1.0">
 <dict>
 	<key>IngredientImageBaseURL</key>
-	<string>https://whisk-server-git-ingredient-images-dannelson.vercel.app/ingredients</string>
+	<string>https://whisk-server-dannelson.vercel.app/ingredients</string>
 </dict>
 </plist>

@@ -8,8 +8,8 @@ enum Config {
            !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return value
         }
-        // Default; replace with your CDN
-        return "https://whisk-server-git-ingredient-images-dannelson.vercel.app/ingredients"
+        // Default to production domain
+        return "https://whisk-server-dannelson.vercel.app/ingredients"
     }
 
     /// Cache-busting version for ingredient images to avoid stale 404s from prior deploys.
@@ -21,7 +21,7 @@ enum Config {
             return value
         }
         // Bump this whenever images are added/renamed on the CDN.
-        return "2"
+        return "3"
     }
 }
 
