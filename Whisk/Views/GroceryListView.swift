@@ -129,6 +129,13 @@ struct GroceryListDetailView: View {
                                 .clipShape(Circle())
                         }
                         
+                        // Share current list contents
+                        ShareLink(item: shareText) {
+                            Image(systemName: "square.and.arrow.up")
+                                .font(.title2)
+                                .foregroundColor(.blue)
+                        }
+
                         Button(action: { showingRecipeInput = true }) {
                             Image(systemName: "plus")
                                 .font(.title2)
@@ -170,6 +177,20 @@ struct GroceryListDetailView: View {
         .sheet(isPresented: $showingRecipeInput) {
             RecipeInputView(dataManager: dataManager, targetList: currentList)
         }
+    }
+}
+
+private extension GroceryListDetailView {
+    var shareText: String {
+        guard let list = currentList else { return "Ingredients" }
+        var lines: [String] = ["Ingredients"]
+        for ing in list.ingredients {
+            let amountPart: String = ing.amount > 0 ? String(format: ing.amount.truncatingRemainder(dividingBy: 1) == 0 ? "%.0f" : "%.2f", ing.amount) : ""
+            let unitPart: String = ing.unit.isEmpty ? "" : " \(ing.unit)"
+            let amt = amountPart.isEmpty && unitPart.isEmpty ? "" : " \(amountPart)\(unitPart)"
+            lines.append("- \(ing.name.capitalized)\(amt)")
+        }
+        return lines.joined(separator: "\n")
     }
 }
 
