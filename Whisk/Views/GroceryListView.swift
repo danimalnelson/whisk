@@ -164,7 +164,7 @@ struct GroceryListDetailView: View {
             }
         }
         .navigationTitle((currentList?.ingredients.isEmpty ?? true) ? "" : "Ingredients")
-        .navigationBarTitleDisplayMode((currentList?.ingredients.isEmpty ?? true) ? .inline : .inline)
+        .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
         .toolbar {
             // Single-list flow: no back button to lists
@@ -212,6 +212,8 @@ struct CategoryHeader: View {
                 .foregroundColor(.secondary)
         }
         .frame(height: 44)
+        // Normalize List header's default extra vertical padding so pinned height is ~44pt
+        .padding(.vertical, -3)
     }
 }
 
