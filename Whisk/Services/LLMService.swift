@@ -304,16 +304,15 @@ class LLMService: ObservableObject {
             return nil
         }
         
-        // Keywords that indicate this is NOT an ingredient (cooking instructions, etc.)
+        // Keywords that indicate this is NOT an ingredient (true instructions/context only)
+        // Descriptor words like "chopped", "drained", "halved", etc. are handled by cleaning, not filtered here.
         let nonIngredientKeywords = [
-            "minute", "minutes", "second", "seconds", "hour", "hours", "cook", "cooking", "heat", "heated",
-            "simmer", "boil", "fry", "bake", "roast", "grill", "stir", "mix", "blend", "whisk",
-            "strain", "drain", "press", "squeeze", "chop", "slice", "dice", "mince", "grate",
+            "minute", "minutes", "second", "seconds", "hour", "hours",
+            "cook", "cooking", "heat", "heated", "simmer", "boil", "fry", "bake", "roast", "grill",
+            "stir", "mix", "blend", "whisk",
             "until", "until just", "until lightly", "until golden", "until tender", "until cooked",
             "over medium", "over high", "over low", "in a", "in the", "on a", "on the",
-            "carefully", "gently", "slowly", "quickly", "immediately", "transfer", "serve",
-            "season", "seasoning", "salt and pepper", "to taste", "divided", "reserved",
-            "cooled", "heated", "warmed", "chilled", "frozen", "thawed", "room temperature"
+            "carefully", "gently", "slowly", "quickly", "immediately", "transfer", "serve"
         ]
         
         for line in lines {
@@ -332,8 +331,9 @@ class LLMService: ObservableObject {
                     if let amountString = Range(amountRange, in: trimmedLine).map({ String(trimmedLine[$0]) }),
                        let nameString = Range(nameRange, in: trimmedLine).map({ String(trimmedLine[$0]) }) {
                         
-                        // Check if this looks like an actual ingredient (not cooking instructions)
-                        let cleanName = nameString.trimmingCharacters(in: .whitespacesAndNewlines)
+                        // Clean first (strip prep/state descriptors), then filter using instruction keywords
+                        var cleanName = nameString.trimmingCharacters(in: .whitespacesAndNewlines)
+                        cleanName = cleanIngredientName(cleanName)
                         let lowercasedName = cleanName.lowercased()
                         
                         // Skip if it contains non-ingredient keywords
@@ -356,8 +356,8 @@ class LLMService: ObservableObject {
                             continue
                         }
                         
-                        // Skip if it looks like a cooking instruction (contains verbs)
-                        let cookingVerbs = ["cook", "heat", "stir", "mix", "blend", "whisk", "strain", "drain", "press", "squeeze", "chop", "slice", "dice", "mince", "grate", "season", "transfer", "serve"]
+                        // Skip if it looks like a cooking instruction (keep only strong instruction verbs)
+                        let cookingVerbs = ["cook", "heat", "stir", "mix", "blend", "whisk", "simmer", "boil", "bake", "roast", "grill"]
                         for verb in cookingVerbs {
                             if lowercasedName.contains(verb) {
                                 print("🚫 Skipping cooking instruction: \(cleanName) (contains '\(verb)')")
