@@ -212,8 +212,8 @@ struct CategoryHeader: View {
                 .foregroundColor(.secondary)
         }
         .frame(height: 44)
-        // Normalize List header's default extra vertical padding so pinned height is ~44pt
-        .padding(.vertical, -3)
+        // Translucent background for pinned effect; black when scrolled with list background
+        .background(.ultraThinMaterial)
     }
 }
 

@@ -9,21 +9,32 @@ struct WhiskApp: App {
         registerInterFonts()
 
         // Configure navigation bar title font sizes
-        let appearance = UINavigationBarAppearance()
-        appearance.configureWithOpaqueBackground()
-        appearance.backgroundColor = .black
-        appearance.titleTextAttributes = [
+        // Standard (inline/pinned) appearance: translucent with dark blur
+        let standard = UINavigationBarAppearance()
+        standard.configureWithTransparentBackground()
+        standard.backgroundEffect = UIBlurEffect(style: .systemChromeMaterialDark)
+        standard.backgroundColor = UIColor.black.withAlphaComponent(0.5)
+        standard.titleTextAttributes = [
             .font: UIFont.systemFont(ofSize: 18, weight: .bold),
             .foregroundColor: UIColor.white
         ]
-        appearance.largeTitleTextAttributes = [
+
+        // Scroll-edge (large, not pinned) appearance: solid black
+        let scrollEdge = UINavigationBarAppearance()
+        scrollEdge.configureWithOpaqueBackground()
+        scrollEdge.backgroundColor = .black
+        scrollEdge.largeTitleTextAttributes = [
             .font: UIFont.systemFont(ofSize: 34, weight: .bold),
             .foregroundColor: UIColor.white
         ]
-        // Apply appearance to all nav bar states
-        UINavigationBar.appearance().standardAppearance = appearance
-        UINavigationBar.appearance().scrollEdgeAppearance = appearance
-        UINavigationBar.appearance().compactAppearance = appearance
+        scrollEdge.titleTextAttributes = [
+            .font: UIFont.systemFont(ofSize: 18, weight: .bold),
+            .foregroundColor: UIColor.white
+        ]
+
+        UINavigationBar.appearance().standardAppearance = standard
+        UINavigationBar.appearance().compactAppearance = standard
+        UINavigationBar.appearance().scrollEdgeAppearance = scrollEdge
     }
     
     var body: some Scene {
