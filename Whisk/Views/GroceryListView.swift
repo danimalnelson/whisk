@@ -239,6 +239,7 @@ struct CategoryHeader: View {
                 .font(.system(size: 14, weight: .regular))
                 .foregroundColor(.secondary)
         }
+        .frame(minHeight: 56)
     }
 }
 
