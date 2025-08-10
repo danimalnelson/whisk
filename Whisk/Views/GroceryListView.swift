@@ -212,8 +212,6 @@ struct CategoryHeader: View {
                 .foregroundColor(.secondary)
         }
         .frame(height: 44)
-        // Translucent background for pinned effect; black when scrolled with list background
-        .background(.ultraThinMaterial)
     }
 }
 

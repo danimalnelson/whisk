@@ -8,18 +8,17 @@ struct WhiskApp: App {
         // Register Inter fonts
         registerInterFonts()
 
-        // Configure navigation bar title font sizes
-        // Standard (inline/pinned) appearance: translucent with dark blur
+        // Keep scroll/pinned behavior idiomatic: black at top (large), translucent when pinned (inline)
         let standard = UINavigationBarAppearance()
         standard.configureWithTransparentBackground()
         standard.backgroundEffect = UIBlurEffect(style: .systemChromeMaterialDark)
-        standard.backgroundColor = UIColor.black.withAlphaComponent(0.5)
         standard.titleTextAttributes = [
             .font: UIFont.systemFont(ofSize: 18, weight: .bold),
             .foregroundColor: UIColor.white
         ]
+        // Show a subtle separator when pinned (inline)
+        standard.shadowColor = UIColor.separator
 
-        // Scroll-edge (large, not pinned) appearance: solid black
         let scrollEdge = UINavigationBarAppearance()
         scrollEdge.configureWithOpaqueBackground()
         scrollEdge.backgroundColor = .black
@@ -31,6 +30,8 @@ struct WhiskApp: App {
             .font: UIFont.systemFont(ofSize: 18, weight: .bold),
             .foregroundColor: UIColor.white
         ]
+        // Remove bottom border when large (not pinned)
+        scrollEdge.shadowColor = .clear
 
         UINavigationBar.appearance().standardAppearance = standard
         UINavigationBar.appearance().compactAppearance = standard
