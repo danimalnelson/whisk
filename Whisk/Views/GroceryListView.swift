@@ -121,12 +121,9 @@ struct GroceryListDetailView: View {
                     
                     HStack(spacing: 28) {
                         Button(action: { showingClearConfirm = true }) {
-                            Image(systemName: "eraser.fill")
+                            Image(systemName: "eraser")
                                 .font(.title2)
                                 .foregroundColor(.white)
-                                .padding(8)
-                                .background(Color.red)
-                                .clipShape(Circle())
                         }
                         
                         // Share current list contents
