@@ -119,11 +119,14 @@ struct GroceryListDetailView: View {
                     
                     Spacer()
                     
-                    HStack(spacing: 20) {
+                    HStack(spacing: 28) {
                         Button(action: { showingClearConfirm = true }) {
-                            Image(systemName: "trash")
+                            Image(systemName: "eraser.fill")
                                 .font(.title2)
-                                .foregroundColor(.red)
+                                .foregroundColor(.white)
+                                .padding(8)
+                                .background(Color.red)
+                                .clipShape(Circle())
                         }
                         
                         Button(action: { showingRecipeInput = true }) {
@@ -134,7 +137,7 @@ struct GroceryListDetailView: View {
                     }
                 }
                 .padding(.horizontal, 20)
-                .frame(height: 50)
+                .frame(height: 44)
                 .background(Color(.systemBackground))
                 .overlay(
                     Rectangle()
@@ -157,7 +160,7 @@ struct GroceryListDetailView: View {
             }
         }
         .navigationTitle((currentList?.ingredients.isEmpty ?? true) ? "" : "Ingredients")
-        .navigationBarTitleDisplayMode((currentList?.ingredients.isEmpty ?? true) ? .inline : .large)
+        .navigationBarTitleDisplayMode((currentList?.ingredients.isEmpty ?? true) ? .inline : .inline)
         .navigationBarBackButtonHidden(true)
         .toolbar {
             // Single-list flow: no back button to lists
@@ -190,7 +193,7 @@ struct CategoryHeader: View {
                 .font(.system(size: 14, weight: .regular))
                 .foregroundColor(.secondary)
         }
-        .frame(height: 40)
+        .frame(height: 44)
     }
 }
 
