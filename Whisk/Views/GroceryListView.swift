@@ -46,192 +46,16 @@ private func ingredientImageURL(for name: String) -> URL? {
 
 struct GroceryListView: View {
     @ObservedObject var dataManager: DataManager
-    @State private var showingCreateList = false
-    @State private var newListName = ""
-    @State private var navigationPath = NavigationPath()
     
     var body: some View {
-        NavigationStack(path: $navigationPath) {
-            VStack(spacing: 0) {
-                if dataManager.groceryLists.isEmpty {
-                    // Empty State
-                    VStack(spacing: 20) {
-                        Image(systemName: "cart.badge.plus")
-                            .font(.system(size: 60))
-                            .foregroundColor(.blue)
-                        
-                        Text("No Grocery Lists")
-                            .font(.title2)
-                            .fontWeight(.semibold)
-                        
-                        Text("Create your first grocery list to get started")
-                            .font(.body)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                        
-                        Button("Create New List") {
-                            showingCreateList = true
-                        }
-                        .buttonStyle(.borderedProminent)
-                    }
-                    .padding()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    // List of Grocery Lists
-                    List {
-                        ForEach(dataManager.groceryLists) { list in
-                            NavigationLink(value: list) {
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(list.name)
-                                            .font(.system(size: 16, weight: .regular))
-                                            .foregroundColor(.primary)
-                                        
-                                        Text("\(list.ingredients.filter { !$0.isChecked }.count) items remaining")
-                                            .font(.system(size: 14, weight: .regular))
-                                            .foregroundColor(.secondary)
-                                    }
-                                    
-                                    Spacer()
-                                }
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                        }
-                        .onDelete(perform: deleteLists)
-                    }
-                    .listStyle(PlainListStyle())
-                }
-            }
-            .overlay(
-                // Floating Action Button
-                VStack {
-                    Spacer()
-                    HStack {
-                        Spacer()
-                        Button(action: { showingCreateList = true }) {
-                            Image(systemName: "plus")
-                                .font(.title2)
-                                .foregroundColor(.white)
-                                .frame(width: 56, height: 56)
-                                .background(Color.blue)
-                                .clipShape(Circle())
-                                .shadow(color: .black.opacity(0.3), radius: 4, x: 0, y: 2)
-                        }
-                        .padding(.trailing, 20)
-                        .padding(.bottom, 20)
-                    }
-                }
-            )
-            .navigationTitle("Lists")
-            .navigationBarTitleDisplayMode(.large)
-            .background()
-            .sheet(isPresented: $showingCreateList) {
-                CreateListView(dataManager: dataManager, isPresented: $showingCreateList, onListCreated: { newList in
-                    navigationPath.append(newList)
-                })
-            }
-            .navigationDestination(for: GroceryList.self) { list in
-                GroceryListDetailView(dataManager: dataManager, list: list)
-            }
-        }
-    }
-    
-    private func deleteLists(offsets: IndexSet) {
-        for index in offsets {
-            dataManager.deleteList(dataManager.groceryLists[index])
-        }
+        // Launch directly into the single list detail view
+        GroceryListDetailView(dataManager: dataManager, list: dataManager.currentList ?? dataManager.createNewList(name: "Ingredients"))
     }
 }
 
-struct CreateListView: View {
-    @ObservedObject var dataManager: DataManager
-    @Binding var isPresented: Bool
-    let onListCreated: (GroceryList) -> Void
-    @State private var listName = ""
-    
-    var body: some View {
-        NavigationView {
-            VStack(spacing: 20) {
-                Text("Create New List")
-                    .font(.title2)
-                    .fontWeight(.semibold)
-                
-                TextField("List Name", text: $listName)
-                    .textFieldStyle(RoundedBorderTextFieldStyle())
-                    .padding(.horizontal)
-                
-                Button("Create List") {
-                    if !listName.isEmpty {
-                        let newList = dataManager.createNewList(name: listName)
-                        onListCreated(newList)
-                        isPresented = false
-                    }
-                }
-                .disabled(listName.isEmpty)
-                .buttonStyle(.borderedProminent)
-                
-                Spacer()
-            }
-            .padding()
-            .background()
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Cancel") {
-                        isPresented = false
-                    }
-                    .foregroundColor(.blue)
-                }
-            }
-        }
-    }
-}
+// Removed CreateListView for single-list flow
 
-struct RenameListView: View {
-    @ObservedObject var dataManager: DataManager
-    let list: GroceryList?
-    @Binding var isPresented: Bool
-    @State private var listName = ""
-    
-    var body: some View {
-        NavigationView {
-            VStack(spacing: 20) {
-                Text("Rename")
-                    .font(.headline)
-                    .foregroundColor(.primary)
-                
-                TextField("List Name", text: $listName)
-                    .textFieldStyle(RoundedBorderTextFieldStyle())
-                    .padding(.horizontal)
-                
-                Button("Rename") {
-                    if !listName.isEmpty, let list = list {
-                        dataManager.renameList(list, newName: listName)
-                        isPresented = false
-                    }
-                }
-                .disabled(listName.isEmpty)
-                .buttonStyle(.borderedProminent)
-                
-                Spacer()
-            }
-            .padding()
-            .background()
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Cancel") {
-                        isPresented = false
-                    }
-                    .foregroundColor(.blue)
-                }
-            }
-            .onAppear {
-                listName = list?.name ?? ""
-            }
-        }
-    }
-}
+// Removed RenameListView for single-list flow
 
 struct GroceryListDetailView: View {
     @ObservedObject var dataManager: DataManager
@@ -355,60 +179,16 @@ struct GroceryListDetailView: View {
                 alignment: .top
             )
         }
-        .navigationTitle(currentList?.name ?? list.name)
+        .navigationTitle("Ingredients")
         .navigationBarTitleDisplayMode(.large)
         .navigationBarBackButtonHidden(true)
         .toolbar {
-            ToolbarItem(placement: .navigationBarLeading) {
-                Button(action: {
-                    dismiss()
-                }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 16, weight: .medium))
-                        Text("Lists")
-                            .font(.system(size: 17))
-                    }
-                    .foregroundColor(.blue)
-                }
-            }
+            // Single-list flow: no back button to lists
             
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Menu {
-                    Button(action: {
-                        showingRenameList = true
-                    }) {
-                        HStack {
-                            Text("Rename")
-                            Spacer()
-                            Image(systemName: "pencil")
-                        }
-                    }
-                    
-                    Button(role: .destructive, action: {
-                        if let currentList = currentList {
-                            dataManager.deleteList(currentList)
-                            dismiss()
-                        }
-                    }) {
-                        HStack {
-                            Text("Delete")
-                            Spacer()
-                            Image(systemName: "trash")
-                        }
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .font(.system(size: 20))
-                        .foregroundColor(.blue)
-                }
-            }
+            // Single-list flow: no rename/delete list actions
         }
         .sheet(isPresented: $showingRecipeInput) {
             RecipeInputView(dataManager: dataManager, targetList: currentList)
-        }
-        .sheet(isPresented: $showingRenameList) {
-            RenameListView(dataManager: dataManager, list: currentList, isPresented: $showingRenameList)
         }
     }
 }
