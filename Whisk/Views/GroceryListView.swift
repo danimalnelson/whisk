@@ -150,16 +150,14 @@ struct GroceryListDetailView: View {
                     alignment: .top
                 )
                 .confirmationDialog(
-                    "Clear all ingredients?",
+                    "Are you sure you want to remove all ingredients?",
                     isPresented: $showingClearConfirm,
                     titleVisibility: .visible
                 ) {
-                    Button("Delete All", role: .destructive) {
+                    Button("Remove All", role: .destructive) {
                         dataManager.clearAllIngredients()
                     }
                     Button("Cancel", role: .cancel) {}
-                } message: {
-                    Text("This will remove all items from the list.")
                 }
             }
         }
