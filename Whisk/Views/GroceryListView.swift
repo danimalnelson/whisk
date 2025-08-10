@@ -84,9 +84,12 @@ struct GroceryListDetailView: View {
             if let currentList = currentList, currentList.ingredients.isEmpty {
                 // Empty List State
                 VStack(spacing: 20) {
-                    Image(systemName: "cart.badge.plus")
-                        .font(.system(size: 60))
-                        .foregroundColor(.blue)
+                    Button(action: { showingRecipeInput = true }) {
+                        Image(systemName: "cart.badge.plus")
+                            .font(.system(size: 60))
+                            .foregroundColor(.blue)
+                    }
+                    .buttonStyle(PlainButtonStyle())
                     
                     Text("Empty List")
                         .font(.headline)
@@ -159,53 +162,53 @@ struct GroceryListDetailView: View {
                 .background()
             }
             
-            // Bottom Bar
-            HStack {
-                if let currentList = currentList {
+            // Bottom Bar (hidden when empty list)
+            if let currentList = currentList, !currentList.ingredients.isEmpty {
+                HStack {
                     Text("\(currentList.ingredients.filter { !$0.isChecked }.count) items remaining")
                         .font(.system(size: 14, weight: .regular))
                         .foregroundColor(.secondary)
-                }
-                
-                Spacer()
-                
-                HStack(spacing: 20) {
-                    Button(action: { showingClearConfirm = true }) {
-                        Image(systemName: "trash")
-                            .font(.title2)
-                            .foregroundColor(.red)
-                    }
                     
-                    Button(action: { showingRecipeInput = true }) {
-                        Image(systemName: "plus")
-                            .font(.title2)
-                            .foregroundColor(.blue)
+                    Spacer()
+                    
+                    HStack(spacing: 20) {
+                        Button(action: { showingClearConfirm = true }) {
+                            Image(systemName: "trash")
+                                .font(.title2)
+                                .foregroundColor(.red)
+                        }
+                        
+                        Button(action: { showingRecipeInput = true }) {
+                            Image(systemName: "plus")
+                                .font(.title2)
+                                .foregroundColor(.blue)
+                        }
                     }
                 }
-            }
-            .padding(.horizontal, 20)
-            .frame(height: 50)
-            .background(Color(.systemBackground))
-            .overlay(
-                Rectangle()
-                    .frame(height: 0.5)
-                    .foregroundColor(Color(.separator)),
-                alignment: .top
-            )
-            .confirmationDialog(
-                "Clear all ingredients?",
-                isPresented: $showingClearConfirm,
-                titleVisibility: .visible
-            ) {
-                Button("Delete All", role: .destructive) {
-                    dataManager.clearAllIngredients()
+                .padding(.horizontal, 20)
+                .frame(height: 50)
+                .background(Color(.systemBackground))
+                .overlay(
+                    Rectangle()
+                        .frame(height: 0.5)
+                        .foregroundColor(Color(.separator)),
+                    alignment: .top
+                )
+                .confirmationDialog(
+                    "Clear all ingredients?",
+                    isPresented: $showingClearConfirm,
+                    titleVisibility: .visible
+                ) {
+                    Button("Delete All", role: .destructive) {
+                        dataManager.clearAllIngredients()
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("This will remove all items from the list.")
                 }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("This will remove all items from the list.")
             }
         }
-        .navigationTitle("Ingredients")
+        .navigationTitle((currentList?.ingredients.isEmpty ?? true) ? "" : "Ingredients")
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
         .toolbar {
