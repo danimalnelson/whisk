@@ -66,6 +66,7 @@ struct GroceryListDetailView: View {
     @ObservedObject var dataManager: DataManager
     let list: GroceryList
     @State private var showingRecipeInput = false
+    @State private var showingClearConfirm = false
     @State private var showingRenameList = false
     @Environment(\.dismiss) private var dismiss
     private let imageService = IngredientImageService.shared
@@ -168,10 +169,18 @@ struct GroceryListDetailView: View {
                 
                 Spacer()
                 
-                Button(action: { showingRecipeInput = true }) {
-                    Image(systemName: "plus")
-                        .font(.title2)
-                        .foregroundColor(.blue)
+                HStack(spacing: 20) {
+                    Button(action: { showingClearConfirm = true }) {
+                        Image(systemName: "trash")
+                            .font(.title2)
+                            .foregroundColor(.red)
+                    }
+                    
+                    Button(action: { showingRecipeInput = true }) {
+                        Image(systemName: "plus")
+                            .font(.title2)
+                            .foregroundColor(.blue)
+                    }
                 }
             }
             .padding(.horizontal, 20)
@@ -183,6 +192,18 @@ struct GroceryListDetailView: View {
                     .foregroundColor(Color(.separator)),
                 alignment: .top
             )
+            .confirmationDialog(
+                "Clear all ingredients?",
+                isPresented: $showingClearConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("Delete All", role: .destructive) {
+                    dataManager.clearAllIngredients()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This will remove all items from the list.")
+            }
         }
         .navigationTitle("Ingredients")
         .navigationBarTitleDisplayMode(.large)

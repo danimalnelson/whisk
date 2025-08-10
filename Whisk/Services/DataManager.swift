@@ -182,6 +182,12 @@ class DataManager: ObservableObject {
         updateCurrentList(list)
     }
     
+    func clearAllIngredients() {
+        guard var list = currentList else { return }
+        list.ingredients.removeAll()
+        updateCurrentList(list)
+    }
+    
     func restoreIngredient(_ ingredient: Ingredient) {
         guard var list = currentList,
               let index = list.ingredients.firstIndex(where: { $0.id == ingredient.id }) else { return }
