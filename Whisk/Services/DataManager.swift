@@ -15,8 +15,12 @@ class DataManager: ObservableObject {
     // MARK: - Grocery Lists Management
     
     func createNewList(name: String) -> GroceryList {
-        let newList = GroceryList(name: name)
-        groceryLists.append(newList)
+        // Enforce a single default list named "Ingredients"
+        if let current = currentList {
+            return current
+        }
+        let newList = GroceryList(name: "Ingredients")
+        groceryLists = [newList]
         currentList = newList
         saveData()
         return newList
@@ -57,7 +61,7 @@ class DataManager: ObservableObject {
     func addIngredientsToCurrentList(_ ingredients: [Ingredient]) {
         // Create a default list if none exists
         if currentList == nil {
-            createNewList(name: "Shopping List")
+            createNewList(name: "Ingredients")
         }
         
         guard var list = currentList else { 
@@ -166,11 +170,8 @@ class DataManager: ObservableObject {
     }
     
     func toggleIngredientChecked(_ ingredient: Ingredient, in list: GroceryList) {
-        guard let listIndex = groceryLists.firstIndex(where: { $0.id == list.id }),
-              let ingredientIndex = groceryLists[listIndex].ingredients.firstIndex(where: { $0.id == ingredient.id }) else { return }
-        
-        groceryLists[listIndex].ingredients[ingredientIndex].isChecked.toggle()
-        saveData()
+        // Route to single-list toggle
+        toggleIngredientChecked(ingredient)
     }
     
     func removeIngredient(_ ingredient: Ingredient) {
@@ -178,6 +179,12 @@ class DataManager: ObservableObject {
               let index = list.ingredients.firstIndex(where: { $0.id == ingredient.id }) else { return }
         
         list.ingredients.remove(at: index)
+        updateCurrentList(list)
+    }
+    
+    func clearAllIngredients() {
+        guard var list = currentList else { return }
+        list.ingredients.removeAll()
         updateCurrentList(list)
     }
     
@@ -358,7 +365,7 @@ class DataManager: ObservableObject {
                     // If not found, use the first list or create a default one
                     if groceryLists.isEmpty {
                         print("📱 No lists found, creating default list")
-                        createNewList(name: "Shopping List")
+                        createNewList(name: "Ingredients")
                     } else {
                         currentList = groceryLists.first
                         print("📱 Using first list as current: \(currentList?.name ?? "nil")")
@@ -368,7 +375,7 @@ class DataManager: ObservableObject {
                 print("❌ Error loading current list: \(error)")
                 if groceryLists.isEmpty {
                     print("📱 Creating default list after error")
-                    createNewList(name: "Shopping List")
+                    createNewList(name: "Ingredients")
                 } else {
                     currentList = groceryLists.first
                 }
@@ -377,7 +384,7 @@ class DataManager: ObservableObject {
             print("📱 No saved current list found")
             if groceryLists.isEmpty {
                 print("📱 Creating default list")
-                createNewList(name: "Shopping List")
+                createNewList(name: "Ingredients")
             } else {
                 currentList = groceryLists.first
                 print("📱 Using first list as current: \(currentList?.name ?? "nil")")
