@@ -184,7 +184,7 @@ struct GroceryListDetailView: View {
                 }
             }
             .padding(.horizontal, 20)
-            .padding(.vertical, 10)
+            .frame(height: 50)
             .background(Color(.systemBackground))
             .overlay(
                 Rectangle()
@@ -206,7 +206,7 @@ struct GroceryListDetailView: View {
             }
         }
         .navigationTitle("Ingredients")
-        .navigationBarTitleDisplayMode(.large)
+        .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
         .toolbar {
             // Single-list flow: no back button to lists
@@ -239,7 +239,7 @@ struct CategoryHeader: View {
                 .font(.system(size: 14, weight: .regular))
                 .foregroundColor(.secondary)
         }
-        .frame(minHeight: 56)
+        .frame(height: 40)
     }
 }
 
