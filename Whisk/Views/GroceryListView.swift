@@ -157,7 +157,7 @@ struct GroceryListDetailView: View {
             }
         }
         .navigationTitle((currentList?.ingredients.isEmpty ?? true) ? "" : "Ingredients")
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarTitleDisplayMode((currentList?.ingredients.isEmpty ?? true) ? .inline : .large)
         .navigationBarBackButtonHidden(true)
         .toolbar {
             // Single-list flow: no back button to lists
