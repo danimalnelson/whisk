@@ -1503,55 +1503,73 @@ class LLMService: ObservableObject {
     }
     
     private func cleanIngredientName(_ name: String) -> String {
-        
         var cleanedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        
-        // Convert to lowercase for comparison
-        let lowercasedName = cleanedName.lowercased()
-        
+
         // Special handling for garlic cloves - preserve "cloves" in the name
-        if lowercasedName.contains("garlic") && lowercasedName.contains("cloves") {
-            // Keep "garlic cloves" as the ingredient name
+        let initialLower = cleanedName.lowercased()
+        if initialLower.contains("garlic") && initialLower.contains("cloves") {
             return "garlic cloves"
         }
-        
-        // Remove preparation words from the beginning (but preserve important descriptors)
-        for word in preparationWords {
-            // Skip if this word should be preserved
-            if preservedWords.contains(word) {
-                continue
+
+        // 1) Remove parenthetical descriptors that contain preparation terms
+        cleanedName = cleanedName.replacingOccurrences(
+            of: #"\([^)]*(?:chopp|slice|dice|minc|grate|shred|julienn|zest|torn|cube|mash|pur(?:e|é)|whipp|beat|crush)[^)]*\)"#,
+            with: "",
+            options: .regularExpression
+        )
+
+        // 2) Remove inline descriptors like ", finely chopped" or "- coarsely sliced"
+        cleanedName = cleanedName.replacingOccurrences(
+            of: #"(?i)(?:,|–|-)\s*(?:finely|roughly|coarsely|thinly|thickly|lightly)?\s*(?:chopped|sliced|diced|minced|grated|shredded|torn|julienned|zested|cubed|mashed|pureed|whipped|beaten|crushed)\b"#,
+            with: "",
+            options: .regularExpression
+        )
+
+        // 3) Remove phrases like "torn into small pieces" or "cut into strips"
+        cleanedName = cleanedName.replacingOccurrences(
+            of: #"(?i)\b(?:torn\s+into\s+small\s+pieces|cut\s+into\s+strips)\b"#,
+            with: "",
+            options: .regularExpression
+        )
+
+        // 4) Remove leading descriptors such as "finely chopped " at the start
+        cleanedName = cleanedName.replacingOccurrences(
+            of: #"(?i)^(?:finely|roughly|coarsely|thinly|thickly|lightly)?\s*(?:chopped|sliced|diced|minced|grated|shredded|torn|julienned|zested|cubed|mashed|pureed|whipped|beaten|crushed)\s+"#,
+            with: "",
+            options: .regularExpression
+        )
+
+        // 5) Remove dangling punctuation and collapse whitespace
+        cleanedName = cleanedName.replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression)
+        cleanedName = cleanedName.replacingOccurrences(of: #"\s*(?:,|;|:|\-|–)\s*$"#, with: "", options: .regularExpression)
+
+        // Fallback: remove single preparation words only at the very start or end (but preserve important descriptors)
+        var changed = true
+        while changed {
+            changed = false
+            let lowercased = cleanedName.lowercased()
+
+            // Beginning
+            if let word = preparationWords.first(where: { !preservedWords.contains($0) && lowercased.range(of: "^\\s*\\b\($0)\\b\\s+", options: .regularExpression) != nil }) {
+                if let range = lowercased.range(of: "^\\s*\\b\(word)\\b\\s+", options: .regularExpression) {
+                    cleanedName = String(cleanedName[range.upperBound...])
+                    changed = true
+                    continue
+                }
             }
-            
-            let wordPattern = "^\\s*\(word)\\s+"
-            if let range = lowercasedName.range(of: wordPattern, options: .regularExpression) {
-                cleanedName = String(cleanedName[range.upperBound...])
-                break
+
+            // End
+            if let word = preparationWords.first(where: { !preservedWords.contains($0) && lowercased.range(of: "\\s+\\b\($0)\\b\\s*$", options: .regularExpression) != nil }) {
+                if let range = lowercased.range(of: "\\s+\\b\(word)\\b\\s*$", options: .regularExpression) {
+                    cleanedName = String(cleanedName[..<range.lowerBound])
+                    changed = true
+                    continue
+                }
             }
         }
-        
-        // Remove preparation words from the end (but preserve important descriptors)
-        for word in preparationWords {
-            // Skip if this word should be preserved
-            if preservedWords.contains(word) {
-                continue
-            }
-            
-            let wordPattern = "\\s+\(word)\\s*$"
-            if let range = lowercasedName.range(of: wordPattern, options: .regularExpression) {
-                cleanedName = String(cleanedName[..<range.lowerBound])
-                break
-            }
-        }
-        
-        // Clean up any extra whitespace
+
         cleanedName = cleanedName.trimmingCharacters(in: .whitespacesAndNewlines)
-        
-        // Ensure we don't return an empty string
-        if cleanedName.isEmpty {
-            return name // Return original if cleaning resulted in empty string
-        }
-        
-        return cleanedName
+        return cleanedName.isEmpty ? name : cleanedName
     }
     
     private func convertToStandardUnits(amount: Double, unit: String) -> (amount: Double, unit: String) {
@@ -2741,14 +2759,18 @@ class LLMService: ObservableObject {
     
     // Words that should be preserved in ingredient names (not removed during cleaning)
     private let preservedWords: Set<String> = [
-        "salted", "unsalted", "sweet", "sour", "bitter", "spicy", "hot", "mild",
+        // Keep these descriptors in ingredient names
+        "fresh", // keep e.g. "fresh basil" per requirement
+        "pitted", // keep e.g. "pitted kalamata olives"
+        "salted", "unsalted",
+        "sweet", "sour", "bitter", "spicy", "hot", "mild",
         "extra", "virgin"
     ]
     
     // Words that should be removed from ingredient names during cleaning
     private let preparationWords: Set<String> = [
         // Preparation/state words
-        "fresh", "mild", "uncooked", "pitted", "drained", "chopped", "sliced", "diced", "minced",
+        "uncooked", "drained", "chopped", "sliced", "diced", "minced",
         "crushed", "whole", "raw", "cooked", "roasted", "toasted", "frozen", "thawed", 
         "warm", "cold", "hot", "softened", "melted", "chilled", "room temperature", "room temp",
         "soft", "hard", "ripe", "unripe", "overripe", "underripe",
