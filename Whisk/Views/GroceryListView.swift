@@ -154,7 +154,7 @@ struct GroceryListDetailView: View {
                     isPresented: $showingClearConfirm,
                     titleVisibility: .hidden
                 ) {
-                    Button("Remove all ingredients", role: .destructive) {
+                    Button("Remove All Ingredients?", role: .destructive) {
                         dataManager.clearAllIngredients()
                     }
                     Button("Cancel", role: .cancel) {}
