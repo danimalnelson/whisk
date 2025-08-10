@@ -113,28 +113,15 @@ struct GroceryListDetailView: View {
             // Bottom Bar (hidden when empty list)
             if let currentList = currentList, !currentList.ingredients.isEmpty {
                 HStack {
-                    Text("\(currentList.ingredients.filter { !$0.isChecked }.count) items remaining")
+                    Spacer()
+                    let remaining = currentList.ingredients.filter { !$0.isChecked }.count
+                    Text(remaining == 1 ? "1 item remaining" : "\(remaining) items remaining")
                         .font(.system(size: 14, weight: .regular))
                         .foregroundColor(.secondary)
-                    
                     Spacer()
-                    
-                    HStack(spacing: 20) {
-                        Button(action: { showingClearConfirm = true }) {
-                            Image(systemName: "trash")
-                                .font(.title2)
-                                .foregroundColor(.red)
-                        }
-                        
-                        Button(action: { showingRecipeInput = true }) {
-                            Image(systemName: "plus")
-                                .font(.title2)
-                                .foregroundColor(.blue)
-                        }
-                    }
                 }
                 .padding(.horizontal, 20)
-                .frame(height: 50)
+                .frame(height: 44)
                 .background(Color(.systemBackground))
                 .overlay(
                     Rectangle()
@@ -143,16 +130,14 @@ struct GroceryListDetailView: View {
                     alignment: .top
                 )
                 .confirmationDialog(
-                    "Clear all ingredients?",
+                    "",
                     isPresented: $showingClearConfirm,
-                    titleVisibility: .visible
+                    titleVisibility: .hidden
                 ) {
-                    Button("Delete All", role: .destructive) {
+                    Button("Remove all ingredients?", role: .destructive) {
                         dataManager.clearAllIngredients()
                     }
                     Button("Cancel", role: .cancel) {}
-                } message: {
-                    Text("This will remove all items from the list.")
                 }
             }
         }
@@ -160,13 +145,45 @@ struct GroceryListDetailView: View {
         .navigationBarTitleDisplayMode((currentList?.ingredients.isEmpty ?? true) ? .inline : .large)
         .navigationBarBackButtonHidden(true)
         .toolbar {
-            // Single-list flow: no back button to lists
-            
-            // Single-list flow: no rename/delete list actions
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Menu {
+                    Button(role: .destructive) {
+                        showingClearConfirm = true
+                    } label: {
+                        Label("Erase list", systemImage: "eraser")
+                    }
+                    ShareLink(item: shareText) {
+                        Label("Share list", systemImage: "square.and.arrow.up")
+                    }
+                    Button {
+                        showingRecipeInput = true
+                    } label: {
+                        Label("Add recipes", systemImage: "plus")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 20))
+                        .foregroundColor(.white)
+                }
+            }
         }
         .sheet(isPresented: $showingRecipeInput) {
             RecipeInputView(dataManager: dataManager, targetList: currentList)
         }
+    }
+}
+
+private extension GroceryListDetailView {
+    var shareText: String {
+        guard let list = currentList else { return "Ingredients" }
+        var lines: [String] = ["Ingredients"]
+        for ing in list.ingredients {
+            let amountPart: String = ing.amount > 0 ? String(format: ing.amount.truncatingRemainder(dividingBy: 1) == 0 ? "%.0f" : "%.2f", ing.amount) : ""
+            let unitPart: String = ing.unit.isEmpty ? "" : " \(ing.unit)"
+            let amt = amountPart.isEmpty && unitPart.isEmpty ? "" : " \(amountPart)\(unitPart)"
+            lines.append("- \(ing.name.capitalized)\(amt)")
+        }
+        return lines.joined(separator: "\n")
     }
 }
 
@@ -178,6 +195,10 @@ struct CategoryHeader: View {
         ingredients.filter { !$0.isChecked }.count
     }
     
+    private var remainingText: String {
+        remainingCount == 1 ? "1 item remaining" : "\(remainingCount) items remaining"
+    }
+    
     var body: some View {
         HStack {
             Text(category.displayName)
@@ -186,11 +207,11 @@ struct CategoryHeader: View {
             
             Spacer()
             
-            Text("\(remainingCount) items remaining")
+            Text(remainingText)
                 .font(.system(size: 14, weight: .regular))
                 .foregroundColor(.secondary)
         }
-        .frame(height: 40)
+        .frame(height: 44)
     }
 }
 

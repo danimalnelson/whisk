@@ -1,11 +1,41 @@
 import SwiftUI
 import CoreText
+import UIKit
 
 @main
 struct WhiskApp: App {
     init() {
         // Register Inter fonts
         registerInterFonts()
+
+        // Keep scroll/pinned behavior idiomatic: black at top (large), translucent when pinned (inline)
+        let standard = UINavigationBarAppearance()
+        standard.configureWithTransparentBackground()
+        standard.backgroundEffect = UIBlurEffect(style: .systemChromeMaterialDark)
+        standard.titleTextAttributes = [
+            .font: UIFont.systemFont(ofSize: 18, weight: .bold),
+            .foregroundColor: UIColor.white
+        ]
+        // Show a subtle separator when pinned (inline)
+        standard.shadowColor = UIColor.separator
+
+        let scrollEdge = UINavigationBarAppearance()
+        scrollEdge.configureWithOpaqueBackground()
+        scrollEdge.backgroundColor = .black
+        scrollEdge.largeTitleTextAttributes = [
+            .font: UIFont.systemFont(ofSize: 34, weight: .bold),
+            .foregroundColor: UIColor.white
+        ]
+        scrollEdge.titleTextAttributes = [
+            .font: UIFont.systemFont(ofSize: 18, weight: .bold),
+            .foregroundColor: UIColor.white
+        ]
+        // Remove bottom border when large (not pinned)
+        scrollEdge.shadowColor = .clear
+
+        UINavigationBar.appearance().standardAppearance = standard
+        UINavigationBar.appearance().compactAppearance = standard
+        UINavigationBar.appearance().scrollEdgeAppearance = scrollEdge
     }
     
     var body: some Scene {
