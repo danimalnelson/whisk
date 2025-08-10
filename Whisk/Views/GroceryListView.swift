@@ -48,8 +48,13 @@ struct GroceryListView: View {
     @ObservedObject var dataManager: DataManager
     
     var body: some View {
-        // Launch directly into the single list detail view
-        GroceryListDetailView(dataManager: dataManager, list: dataManager.currentList ?? dataManager.createNewList(name: "Ingredients"))
+        // Launch directly into the single list detail view within a navigation stack for a visible title
+        NavigationStack {
+            GroceryListDetailView(
+                dataManager: dataManager,
+                list: dataManager.currentList ?? dataManager.createNewList(name: "Ingredients")
+            )
+        }
     }
 }
 
