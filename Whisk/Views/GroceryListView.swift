@@ -130,7 +130,7 @@ struct GroceryListDetailView: View {
                         ShareLink(item: shareText) {
                             Image(systemName: "square.and.arrow.up")
                                 .font(.title2)
-                                .foregroundColor(.blue)
+                                .foregroundColor(.white)
                         }
 
                         Button(action: { showingRecipeInput = true }) {
