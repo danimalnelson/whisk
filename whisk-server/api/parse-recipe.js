@@ -28,7 +28,7 @@ async function parseRecipe(url) {
   const htmlContent = await fetchWebpageContent(url);
   console.log('Fetched webpage content length:', htmlContent.length);
   
-  // Extract ingredients from HTML
+  // Extract ingredients from HTML with DOM parsing
   const extractedIngredients = extractIngredientsFromHTML(htmlContent);
   console.log('Extracted ingredients count:', extractedIngredients.length);
   
@@ -67,80 +67,57 @@ async function fetchWebpageContent(url) {
   console.log('📄 Raw HTML length:', htmlString.length);
   
   // Enhanced approach: Extract text while preserving ingredient information
-  let textContent = htmlString
-    .replace(/<[^>]+>/g, ' ') // Replace tags with spaces instead of removing
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&rsquo;/g, "'")
-    .replace(/&lsquo;/g, "'")
-    .replace(/&mdash;/g, "—")
-    .replace(/&ndash;/g, "–")
-    .replace(/\s+/g, ' '); // Normalize whitespace
-  
-  return textContent;
+  return htmlString;
 }
 
 function extractIngredientsFromHTML(htmlString) {
-  const listPatterns = [
-    /<ul[^>]*>(.*?)<\/ul>/gs,
-    /<ol[^>]*>(.*?)<\/ol>/gs
-  ];
-  
-  let extractedIngredients = [];
-  
-  for (const pattern of listPatterns) {
-    const matches = htmlString.match(pattern);
-    
-    if (matches) {
-      for (const match of matches) {
-        const listContent = match;
-        
-        // Extract individual list items
-        const itemPattern = /<li[^>]*>(.*?)<\/li>/gs;
-        const itemMatches = listContent.match(itemPattern);
-        
-        if (itemMatches) {
-          let allItems = [];
-          let hasMeasurement = false;
-          
-          for (const itemMatch of itemMatches) {
-            const itemContent = itemMatch.replace(/<[^>]*>/g, '').trim();
-            allItems.push(itemContent);
-            
-            // Check if this item has measurement keywords
-            const measurementKeywords = [
-              'cup', 'cups', 'tablespoon', 'tablespoons', 'teaspoon', 'teaspoons',
-              'ounce', 'ounces', 'pound', 'pounds', 'gram', 'grams', 'kilogram', 'kilograms',
-              'ml', 'milliliter', 'milliliters', 'l', 'liter', 'liters',
-              'small', 'medium', 'large', 'clove', 'cloves', 'bunch', 'bunches',
-              'can', 'cans', 'package', 'packages', 'jar', 'jars', 'bottle', 'bottles'
-            ];
-            
-            if (measurementKeywords.some(keyword => 
-              itemContent.toLowerCase().includes(keyword))) {
-              hasMeasurement = true;
-            }
-          }
-          
-          // If the list has measurements, include all items
-          if (hasMeasurement) {
-            for (const item of allItems) {
-              if (item.trim()) {
-                extractedIngredients.push(item.trim());
-                console.log('📋 Found ingredient in validated list:', item.trim());
-              }
-            }
-          }
-        }
+  const cheerio = require('cheerio');
+  const $ = cheerio.load(htmlString);
+
+  // Prefer JSON-LD if present
+  const ld = $('script[type="application/ld+json"]').map((_, el) => $(el).text()).get();
+  for (const block of ld) {
+    try {
+      const json = JSON.parse(block);
+      const graph = Array.isArray(json['@graph']) ? json['@graph'] : [json];
+      const recipe = graph.find(n => (n['@type'] === 'Recipe') || (Array.isArray(n['@type']) && n['@type'].includes('Recipe')));
+      if (recipe && Array.isArray(recipe.ingredients || recipe.recipeIngredient)) {
+        const arr = recipe.ingredients || recipe.recipeIngredient;
+        return arr.map(s => String(s).trim()).filter(Boolean);
+      }
+    } catch (_) {}
+  }
+
+  // Fallback to DOM-based list detection near an Ingredients heading
+  const headings = $('*:contains("Ingredients")').filter((_, el) => /ingredients/i.test($(el).text().trim())).toArray();
+  const candidates = [];
+  for (const h of headings) {
+    // Search sibling lists near the heading
+    const lists = $(h).nextAll('ul,ol').slice(0, 3).toArray();
+    for (const list of lists) {
+      const items = $(list).find('li').map((_, li) => $(li).text().replace(/\s+/g, ' ').trim()).get();
+      if (items.length >= 3) {
+        candidates.push(items);
       }
     }
   }
-  
-  return extractedIngredients;
+  if (candidates.length > 0) {
+    // Choose the largest reasonable candidate
+    const best = candidates.sort((a,b)=>b.length - a.length)[0];
+    return best;
+  }
+
+  // As a last resort, scan all lists and filter instruction/tool keywords
+  const allLists = $('ul,ol').toArray();
+  const instructionWords = ["soak","combine","whisk","microwave","divide","roll","insert","light","preheat","clean","place","cover","cook","flip","remove","transfer","serve"];
+  const toolWords = ["skewer","skewers","bamboo","charcoal","chimney","grill","grate","coals","plate","bowl","microwave"];
+  let best = [];
+  for (const list of allLists) {
+    const items = $(list).find('li').map((_, li) => $(li).text().replace(/\s+/g, ' ').trim()).get();
+    const cleaned = items.filter(t => t && !instructionWords.some(w=>t.toLowerCase().includes(w)) && !toolWords.some(w=>t.toLowerCase().includes(w)));
+    if (cleaned.length > best.length) best = cleaned;
+  }
+  return best;
 }
 
 function extractRecipeTitle(htmlString) {

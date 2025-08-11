@@ -1,7 +1,7 @@
 import Foundation
 
 class LLMService: ObservableObject {
-    private let baseURL = "https://whisk-server-97zqsyqbp-dannelson.vercel.app/api/call-openai"
+    private let baseURL = "https://whisk-server-git-new-recipe-adder-dannelson.vercel.app/api/call-openai"
     
     // 🚀 NEW: Simple in-memory cache for parsed recipes
     private var recipeCache: [String: RecipeParsingResult] = [:]
