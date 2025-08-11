@@ -61,7 +61,7 @@ class DataManager: ObservableObject {
     func addIngredientsToCurrentList(_ ingredients: [Ingredient]) {
         // Create a default list if none exists
         if currentList == nil {
-            createNewList(name: "Ingredients")
+            _ = createNewList(name: "Ingredients")
         }
         
         guard var list = currentList else { 
@@ -78,8 +78,11 @@ class DataManager: ObservableObject {
         
         print("🛒 Filtered out \(ingredients.count - filteredIngredients.count) common household items")
         
+        // Normalize special cases (e.g., split "salt and pepper", set "To Taste")
+        let normalizedIngredients = preprocessIngredients(filteredIngredients)
+
         // Smart ingredient consolidation
-        for newIngredient in filteredIngredients {
+        for newIngredient in normalizedIngredients {
             if let existingIndex = findConsolidatableIngredient(newIngredient, in: list.ingredients) {
                 // Combine amounts with unit conversion if needed
                 let consolidatedAmount = consolidateAmounts(
@@ -91,6 +94,10 @@ class DataManager: ObservableObject {
                 
                 list.ingredients[existingIndex].amount = consolidatedAmount.amount
                 list.ingredients[existingIndex].unit = consolidatedAmount.unit
+                // If more of an already-checked ingredient is added, mark it as needing to buy again
+                if list.ingredients[existingIndex].isChecked {
+                    list.ingredients[existingIndex].isChecked = false
+                }
                 
                 print("🛒 Consolidated: \(newIngredient.name) (\(newIngredient.amount) \(newIngredient.unit)) + existing → \(consolidatedAmount.amount) \(consolidatedAmount.unit)")
             } else {
@@ -122,8 +129,11 @@ class DataManager: ObservableObject {
         
         print("🛒 Filtered out \(ingredients.count - filteredIngredients.count) common household items")
         
+        // Normalize special cases (e.g., split "salt and pepper", set "To Taste")
+        let normalizedIngredients = preprocessIngredients(filteredIngredients)
+
         // Smart ingredient consolidation
-        for newIngredient in filteredIngredients {
+        for newIngredient in normalizedIngredients {
             print("🛒 Processing ingredient: \(newIngredient.name) - \(newIngredient.amount) \(newIngredient.unit)")
             
             if let existingIndex = findConsolidatableIngredient(newIngredient, in: updatedList.ingredients) {
@@ -137,6 +147,10 @@ class DataManager: ObservableObject {
                 
                 updatedList.ingredients[existingIndex].amount = consolidatedAmount.amount
                 updatedList.ingredients[existingIndex].unit = consolidatedAmount.unit
+                // If more of an already-checked ingredient is added, uncheck it so it shows up again
+                if updatedList.ingredients[existingIndex].isChecked {
+                    updatedList.ingredients[existingIndex].isChecked = false
+                }
                 
                 print("🛒 Consolidated: \(newIngredient.name) (\(newIngredient.amount) \(newIngredient.unit)) + existing → \(consolidatedAmount.amount) \(consolidatedAmount.unit)")
             } else {
@@ -159,6 +173,60 @@ class DataManager: ObservableObject {
         
         saveData()
         print("🛒 After update - list ingredients: \(updatedList.ingredients.count)")
+    }
+
+    // MARK: - Salt/Pepper Normalization
+
+    private func preprocessIngredients(_ ingredients: [Ingredient]) -> [Ingredient] {
+        var result: [Ingredient] = []
+        for ing in ingredients {
+            let expanded = splitSaltAndPepperIfNeeded(ing)
+            for e in expanded {
+                result.append(normalizeSaltPepperToTaste(e))
+            }
+        }
+        return result
+    }
+
+    private func splitSaltAndPepperIfNeeded(_ ingredient: Ingredient) -> [Ingredient] {
+        let name = ingredient.name.lowercased()
+        let hasSalt = name.contains("salt")
+        let hasPepper = name.contains("pepper")
+        let isCombo = hasSalt && hasPepper
+        let u = ingredient.unit.trimmingCharacters(in: .whitespaces).lowercased()
+        let noExplicitMeasure = u.isEmpty || u == "piece" || u == "pieces" || u == "to taste"
+        let defaultedAmount = ingredient.amount <= 1.0 // treat 1 as likely default
+
+        guard isCombo && noExplicitMeasure && defaultedAmount else {
+            return [ingredient]
+        }
+
+        // Derive specific salt/pepper wording if present
+        let usesKosher = name.contains("kosher")
+        let usesBlackPepper = name.contains("black pepper") || name.contains("freshly ground black pepper")
+
+        let saltName = usesKosher ? "kosher salt" : "salt"
+        let pepperName = usesBlackPepper ? "black pepper" : "pepper"
+
+        let salt = Ingredient(name: saltName, amount: 0, unit: "To Taste", category: .pantry)
+        let pepper = Ingredient(name: pepperName, amount: 0, unit: "To Taste", category: .pantry)
+        return [salt, pepper]
+    }
+
+    private func normalizeSaltPepperToTaste(_ ingredient: Ingredient) -> Ingredient {
+        var ing = ingredient
+        let lower = ing.name.lowercased()
+        let isSalt = lower.contains("salt")
+        let isPepper = lower.contains("pepper")
+        let unitLower = ing.unit.trimmingCharacters(in: .whitespaces).lowercased()
+        let hasExplicitMeasure = !((unitLower.isEmpty || unitLower == "piece" || unitLower == "pieces" || unitLower == "to taste") && ing.amount <= 1)
+
+        if (isSalt || isPepper) && !hasExplicitMeasure {
+            ing.unit = "To Taste"
+            ing.amount = 0
+            ing.category = .pantry
+        }
+        return ing
     }
     
     func toggleIngredientChecked(_ ingredient: Ingredient) {
@@ -247,8 +315,27 @@ class DataManager: ObservableObject {
     }
     
     private func consolidateAmounts(existing: Double, existingUnit: String, new: Double, newUnit: String) -> (amount: Double, unit: String) {
+        let existingU = existingUnit.trimmingCharacters(in: .whitespaces).lowercased()
+        let newU = newUnit.trimmingCharacters(in: .whitespaces).lowercased()
+
+        // Handle "To Taste" as non-quantitative (amount = 0)
+        let isExistingToTaste = existingU == "to taste"
+        let isNewToTaste = newU == "to taste"
+
+        if isExistingToTaste && isNewToTaste {
+            return (0, "To Taste")
+        }
+        if isExistingToTaste && !isNewToTaste {
+            // Keep the quantitative measurement
+            return (new, newUnit)
+        }
+        if !isExistingToTaste && isNewToTaste {
+            // No change to existing quantitative measurement
+            return (existing, existingUnit)
+        }
+
         // If units are the same, simple addition
-        if existingUnit.lowercased() == newUnit.lowercased() {
+        if existingU == newU {
             return (existing + new, existingUnit)
         }
         
@@ -365,7 +452,7 @@ class DataManager: ObservableObject {
                     // If not found, use the first list or create a default one
                     if groceryLists.isEmpty {
                         print("📱 No lists found, creating default list")
-                        createNewList(name: "Ingredients")
+                        _ = createNewList(name: "Ingredients")
                     } else {
                         currentList = groceryLists.first
                         print("📱 Using first list as current: \(currentList?.name ?? "nil")")
@@ -375,7 +462,7 @@ class DataManager: ObservableObject {
                 print("❌ Error loading current list: \(error)")
                 if groceryLists.isEmpty {
                     print("📱 Creating default list after error")
-                    createNewList(name: "Ingredients")
+                    _ = createNewList(name: "Ingredients")
                 } else {
                     currentList = groceryLists.first
                 }
@@ -384,13 +471,38 @@ class DataManager: ObservableObject {
             print("📱 No saved current list found")
             if groceryLists.isEmpty {
                 print("📱 Creating default list")
-                createNewList(name: "Ingredients")
+                _ = createNewList(name: "Ingredients")
             } else {
                 currentList = groceryLists.first
                 print("📱 Using first list as current: \(currentList?.name ?? "nil")")
             }
         }
         
+        // Enforce single-list model: collapse any legacy extra lists into one
+        enforceSingleListModel()
         print("📱 Data loading complete. Current list: \(currentList?.name ?? "nil") with \(currentList?.ingredients.count ?? 0) ingredients")
+    }
+
+    // MARK: - Single-List Migration
+    private func enforceSingleListModel() {
+        // If multiple lists exist from legacy versions, keep only the current one
+        if !groceryLists.isEmpty {
+            let selected: GroceryList
+            if let current = currentList, let match = groceryLists.first(where: { $0.id == current.id }) {
+                selected = match
+            } else {
+                selected = groceryLists.first!
+                currentList = selected
+            }
+            var single = selected
+            single.name = "Ingredients"
+            groceryLists = [single]
+            currentList = single
+            saveData()
+            print("🔄 Migrated to single-list model. Kept list with \(single.ingredients.count) ingredients")
+        } else {
+            // Ensure at least one list exists
+            _ = createNewList(name: "Ingredients")
+        }
     }
 } 

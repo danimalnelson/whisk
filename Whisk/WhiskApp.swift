@@ -12,8 +12,9 @@ struct WhiskApp: App {
         let standard = UINavigationBarAppearance()
         standard.configureWithTransparentBackground()
         standard.backgroundEffect = UIBlurEffect(style: .systemChromeMaterialDark)
+        let interBold18 = UIFont(name: "Inter-Bold", size: 18) ?? UIFont.systemFont(ofSize: 18, weight: .bold)
         standard.titleTextAttributes = [
-            .font: UIFont.systemFont(ofSize: 18, weight: .bold),
+            .font: interBold18,
             .foregroundColor: UIColor.white
         ]
         // Show a subtle separator when pinned (inline)
@@ -22,12 +23,13 @@ struct WhiskApp: App {
         let scrollEdge = UINavigationBarAppearance()
         scrollEdge.configureWithOpaqueBackground()
         scrollEdge.backgroundColor = .black
+        let interBold34 = UIFont(name: "Inter-Bold", size: 34) ?? UIFont.systemFont(ofSize: 34, weight: .bold)
         scrollEdge.largeTitleTextAttributes = [
-            .font: UIFont.systemFont(ofSize: 34, weight: .bold),
+            .font: interBold34,
             .foregroundColor: UIColor.white
         ]
         scrollEdge.titleTextAttributes = [
-            .font: UIFont.systemFont(ofSize: 18, weight: .bold),
+            .font: interBold18,
             .foregroundColor: UIColor.white
         ]
         // Remove bottom border when large (not pinned)
@@ -41,7 +43,7 @@ struct WhiskApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .environment(\.font, .system(.body))
+                .environment(\.font, .interBody())
                 .preferredColorScheme(.dark)
         }
     }

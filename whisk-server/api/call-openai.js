@@ -1,3 +1,7 @@
+// Simple in-memory LRU cache for responses by prompt hash (best-effort on serverless)
+const responseCache = new Map();
+const MAX_CACHE_ENTRIES = 50;
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -12,25 +16,39 @@ export default async function handler(req, res) {
   const startTime = Date.now();
 
   try {
+    // Cache key based on prompt length and a simple hash
+    const key = simpleHash(prompt);
+    if (responseCache.has(key)) {
+      const cached = responseCache.get(key);
+      // Move to recent
+      responseCache.delete(key);
+      responseCache.set(key, cached);
+      return res.json({ success: true, content: cached.content, metrics: { apiCallTime: 0, totalTime: Date.now() - startTime, tokens: cached.tokens || undefined, cached: true } });
+    }
+
     // Time the API call
     const apiCallStartTime = Date.now();
-    const response = await fetch('https://api.openai.com/v1/completions', {
+
+    // Abort if slow (> 12s)
+    const controller = new AbortController();
+    const abortTimeout = setTimeout(() => controller.abort(), 12000);
+
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
       },
       body: JSON.stringify({
-        model: 'gpt-3.5-turbo-instruct',
-        prompt: prompt,
-        max_tokens: 2000,
-        temperature: 0.0,
-        presence_penalty: 0,
-        frequency_penalty: 0,
-        top_p: 1,
-        stream: false
-      })
+        model: 'gpt-4o-mini',
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 900,
+        temperature: 0.1,
+        top_p: 1
+      }),
+      signal: controller.signal
     });
+    clearTimeout(abortTimeout);
     timings.apiCall = Date.now() - apiCallStartTime;
 
     if (!response.ok) {
@@ -40,11 +58,10 @@ export default async function handler(req, res) {
     }
 
     const data = await response.json();
-    if (!data.choices?.[0]?.text) {
+    const content = data.choices?.[0]?.message?.content;
+    if (!content) {
       throw new Error('Invalid response format from OpenAI API');
     }
-    
-    const content = data.choices[0].text;
     const totalTime = Date.now() - startTime;
 
     // Log only essential metrics
@@ -54,6 +71,15 @@ export default async function handler(req, res) {
     console.log(`📊 Tokens: ${data.usage?.total_tokens || 'N/A'}`);
     console.log('========================');
     
+    // Cache response (best effort LRU)
+    try {
+      responseCache.set(key, { content, tokens: data.usage?.total_tokens });
+      if (responseCache.size > MAX_CACHE_ENTRIES) {
+        const firstKey = responseCache.keys().next().value;
+        responseCache.delete(firstKey);
+      }
+    } catch (_) {}
+
     res.json({
       success: true,
       content: content,
@@ -70,4 +96,14 @@ export default async function handler(req, res) {
       error: error.message
     });
   }
+}
+
+function simpleHash(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const chr = str.charCodeAt(i);
+    hash = (hash << 5) - hash + chr;
+    hash |= 0; // Convert to 32bit integer
+  }
+  return String(hash);
 }
