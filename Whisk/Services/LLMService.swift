@@ -424,7 +424,7 @@ class LLMService: ObservableObject {
                         }
                         
                         // Prefer weight in grams if present in original text (canonicalize amount)
-                        if let gramsMatch = try? NSRegularExpression(pattern: "(?i)\\((?:[^)]*?)(\\d+(?:\\.\\d+)?)\\s*(?:g|grams)\\b[^(]*\\)"),
+                        if let gramsMatch = try? NSRegularExpression(pattern: "(?i)\\((?:[^)]*?)(\\d+(?:\\.\\d+)?)\\s*(?:g|grams)\\b[^^(]*\\)"),
                            let mm = gramsMatch.firstMatch(in: trimmedLine, options: [], range: NSRange(trimmedLine.startIndex..., in: trimmedLine)),
                            mm.numberOfRanges >= 2,
                            let rr = Range(mm.range(at: 1), in: trimmedLine),
@@ -1729,7 +1729,7 @@ class LLMService: ObservableObject {
 		let originalName = ingredient.name
         
 		// 0) Prefer grams if present in original text (canonical amount)
-		if let gramsMatch = try? NSRegularExpression(pattern: "(?i)\\((?:[^)]*?)(\\d+(?:\\.\\d+)?)\\s*(?:g|grams)\\b[^(]*\\)"),
+		if let gramsMatch = try? NSRegularExpression(pattern: "(?i)\\((?:[^)]*?)(\\d+(?:\\.\\d+)?)\\s*(?:g|grams)\\b[^^(]*\\)"),
 		   let mm = gramsMatch.firstMatch(in: originalName, options: [], range: NSRange(originalName.startIndex..., in: originalName)),
 		   mm.numberOfRanges >= 2,
 		   let rr = Range(mm.range(at: 1), in: originalName),
