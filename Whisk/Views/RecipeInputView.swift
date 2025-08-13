@@ -23,18 +23,23 @@ struct RecipeInputView: View {
             VStack(spacing: 20) {
                 // URL Input Section
                 VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        TextField("Enter recipe URL", text: $newURL)
-                            .textFieldStyle(RoundedBorderTextFieldStyle())
-                            .autocapitalization(.none)
-                            .disableAutocorrection(true)
-                        
-                        Button("Add") {
-                            addURL()
+                    // Text field with inline Add button
+                    TextField("Enter recipe URL", text: $newURL)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .autocapitalization(.none)
+                        .disableAutocorrection(true)
+                        .padding(.trailing, 70)
+                        .overlay(alignment: .trailing) {
+                            Button("Add") { addURL() }
+                                .font(.system(size: 14, weight: .semibold))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(newURL.isEmpty ? Color.gray.opacity(0.3) : Color.white)
+                                .foregroundColor(.black)
+                                .cornerRadius(8)
+                                .padding(.trailing, 6)
+                                .disabled(newURL.isEmpty)
                         }
-                        .disabled(newURL.isEmpty)
-                        .buttonStyle(.bordered)
-                    }
                 }
                 .padding(.horizontal)
                 
