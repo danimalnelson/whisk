@@ -23,10 +23,6 @@ struct RecipeInputView: View {
             VStack(spacing: 20) {
                 // URL Input Section
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Add recipe URLs")
-                        .font(.headline)
-                        .foregroundColor(.primary)
-                    
                     HStack {
                         TextField("Enter recipe URL", text: $newURL)
                             .textFieldStyle(RoundedBorderTextFieldStyle())
@@ -63,18 +59,20 @@ struct RecipeInputView: View {
                     HStack {
                         if isParsing {
                             ProgressView()
-                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                .progressViewStyle(CircularProgressViewStyle(tint: .black))
                                 .scaleEffect(0.8)
                         } else {
                             Image(systemName: "wand.and.stars")
+                                .foregroundColor(.black)
                         }
                         
                         Text(isParsing ? "Creating list..." : "Create list")
+                            .foregroundColor(.black)
                     }
                     .frame(maxWidth: .infinity)
                     .padding()
-                    .background(Color.blue)
-                    .foregroundColor(.white)
+                    .background(Color.white)
+                    .foregroundColor(.black)
                     .cornerRadius(10)
                 }
                 .disabled(recipeEntries.isEmpty || isParsing)
@@ -87,6 +85,7 @@ struct RecipeInputView: View {
                     Button(action: { dismiss() }) {
                         Image(systemName: "xmark")
                             .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(.white)
                     }
                     .accessibilityLabel(Text("Close"))
                 }
