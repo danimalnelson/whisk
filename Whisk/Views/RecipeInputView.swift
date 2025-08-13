@@ -23,25 +23,31 @@ struct RecipeInputView: View {
             VStack(spacing: 20) {
                 // URL Input Section
                 VStack(alignment: .leading, spacing: 10) {
-                    // Text field with inline Add button
-                    TextField("Enter recipe URL", text: $newURL)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
-                        .autocapitalization(.none)
-                        .disableAutocorrection(true)
-                        .padding(.trailing, 70)
-                        .overlay(alignment: .trailing) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color(.secondarySystemFill))
+                        HStack(spacing: 8) {
+                            TextField("Enter recipe URL", text: $newURL)
+                                .autocapitalization(.none)
+                                .disableAutocorrection(true)
+                                .foregroundColor(.white)
+                                .frame(height: 38)
                             Button("Add") { addURL() }
                                 .font(.system(size: 14, weight: .semibold))
                                 .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
+                                .frame(height: 38)
                                 .background(newURL.isEmpty ? Color.gray.opacity(0.3) : Color.white)
                                 .foregroundColor(.black)
                                 .cornerRadius(8)
-                                .padding(.trailing, 6)
                                 .disabled(newURL.isEmpty)
                         }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                    }
+                    .frame(height: 50)
                 }
                 .padding(.horizontal)
+                .padding(.top, 16)
                 
                 // URL List
                 if !recipeEntries.isEmpty {
@@ -70,7 +76,10 @@ struct RecipeInputView: View {
                                 .progressViewStyle(CircularProgressViewStyle(tint: .black))
                                 .scaleEffect(0.8)
                         }
-                        Text(isParsing ? "Adding recipes..." : "Add recipes")
+                        // Dynamic button label based on whether list already has ingredients
+                        let listHasItems = !((targetList ?? dataManager.currentList)?.ingredients.isEmpty ?? true)
+                        Text(isParsing ? (listHasItems ? "Adding..." : "Creating...") : (listHasItems ? "Add to list" : "Create list"))
+                            .font(.system(size: 16, weight: .semibold))
                             .foregroundColor(.black)
                     }
                     .frame(maxWidth: .infinity)
