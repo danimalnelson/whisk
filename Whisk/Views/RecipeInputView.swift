@@ -152,7 +152,7 @@ struct RecipeInputView: View {
                 }
                 
                 // Collect results as they complete
-                for await (index, result, duration) in group {
+                for await (_, result, duration) in group {
                     individualTimings.append(duration)
                     
                     await MainActor.run {
@@ -290,7 +290,7 @@ private struct RecipeRowView: View {
                 Text((entry.title ?? formattedURLTitle(entry.url)).isEmpty ? formattedURLTitle(entry.url) : (entry.title ?? "")).lineLimit(2)
                     .font(.system(size: 16, weight: .regular))
                     .foregroundColor(.primary)
-                Text(entry.siteName ?? friendlySiteName(from: entry.url))
+                Text(entry.siteName ?? RecipeRowView.friendlySiteName(from: entry.url))
                     .font(.system(size: 14, weight: .regular))
                     .foregroundColor(.secondary)
             }
@@ -306,7 +306,7 @@ private struct RecipeRowView: View {
         return lastPath.capitalized
     }
     
-    private func friendlySiteName(from urlString: String) -> String {
+    static func friendlySiteName(from urlString: String) -> String {
         guard let host = URL(string: urlString)?.host?.lowercased() else { return "" }
         // Strip www.
         let clean = host.replacingOccurrences(of: "^www\\.", with: "", options: .regularExpression)
@@ -343,7 +343,7 @@ private extension RecipeInputView {
             entry.title = title
             entry.siteName = site
         } else {
-            entry.siteName = RecipeRowView(entry: entry).friendlySiteName(from: urlString)
+            entry.siteName = RecipeRowView.friendlySiteName(from: urlString)
         }
         await MainActor.run {
             recipeEntries[idx] = entry
@@ -355,19 +355,27 @@ private extension RecipeInputView {
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
             guard let html = String(data: data, encoding: .utf8) else { return nil }
-            // Extract title
-            var title = html.replacingOccurrences(of: ".*<title[^>]*>(.*?)</title>.*", with: "$1", options: [.regularExpression, .dotMatchesLineSeparators])
-            title = title.trimmingCharacters(in: .whitespacesAndNewlines)
-            title = title.replacingOccurrences(of: "\n", with: " ")
-            // Derive site from title separators
-            var site = ""
-            if let sepRange = title.range(of: #"\s[\-\|]\s"#, options: .regularExpression) {
-                let rhs = String(title[sepRange.upperBound...])
-                site = rhs.trimmingCharacters(in: .whitespacesAndNewlines)
-            } else {
-                site = RecipeRowView(entry: RecipeEntry(url: urlString)).friendlySiteName(from: urlString)
+            // Extract title using NSRegularExpression with dotAll
+            let nshtml = html as NSString
+            let pattern = "(?s).*<title[^>]*>(.*?)</title>.*"
+            if let rx = try? NSRegularExpression(pattern: pattern, options: []),
+               let m = rx.firstMatch(in: html, options: [], range: NSRange(location: 0, length: nshtml.length)),
+               m.numberOfRanges >= 2 {
+                let r = m.range(at: 1)
+                var title = nshtml.substring(with: r)
+                title = title.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+                title = title.replacingOccurrences(of: "\n", with: " ")
+                // Derive site from title separators
+                var site = ""
+                if let sepRange = title.range(of: #"\s[\-\|]\s"#, options: .regularExpression) {
+                    let rhs = String(title[sepRange.upperBound...])
+                    site = rhs.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+                } else {
+                    site = RecipeRowView.friendlySiteName(from: urlString)
+                }
+                return (title, site)
             }
-            return (title, site)
+            return nil
         } catch {
             return nil
         }
