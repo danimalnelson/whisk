@@ -50,6 +50,7 @@ struct RecipeInputView: View {
                     }
                     .listStyle(PlainListStyle())
                     .scrollContentBackground(.hidden)
+                    .listRowBackground(Color.clear)
                 }
                 
                 Spacer()
@@ -61,12 +62,8 @@ struct RecipeInputView: View {
                             ProgressView()
                                 .progressViewStyle(CircularProgressViewStyle(tint: .black))
                                 .scaleEffect(0.8)
-                        } else {
-                            Image(systemName: "wand.and.stars")
-                                .foregroundColor(.black)
                         }
-                        
-                        Text(isParsing ? "Creating list..." : "Create list")
+                        Text(isParsing ? "Adding recipes..." : "Add recipes")
                             .foregroundColor(.black)
                     }
                     .frame(maxWidth: .infinity)
