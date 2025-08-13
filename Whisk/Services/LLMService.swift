@@ -333,7 +333,7 @@ class LLMService: ObservableObject {
         var ingredients: [Ingredient] = []
         
         // Pattern A: measurement-based (amount + measurable unit + name). Match plural before singular to avoid leaving trailing 's'.
-        let ingredientPattern = #"(?i)(\d+[\d\/\s\.]*)\s*(cups?|tablespoons?|tbsp|teaspoons?|tsp|ounces?|oz|pounds?|lb|lbs|grams?|g|kg|milliliters?|ml|liters?|pint|pints|quart|quarts|gallon|gallons|cloves?|sprigs?|bunches?|heads?|leaves?|pieces?)\s+([^,\.]+?)(?:\s*\([^)]*\))?(?:\s*,\s*[^,]*)?$"#
+        let ingredientPattern = #"(?i)(\d+[\d\/\s\.]*)\s*(cups?|tablespoons?|tbsp|teaspoons?|tsp|ounces?|oz|pounds?|lb|lbs|grams?|g(?![a-z])|kg|milliliters?|ml|liters?|pint|pints|quart|quarts|gallon|gallons|cloves?|sprigs?|bunches?|heads?|leaves?|pieces?)\s+([^,\.]+?)(?:\s*\([^)]*\))?(?:\s*,\s*[^,]*)?$"#
         // Pattern B: count-based (amount + name without explicit unit): e.g., "8 scallions", "3 star anise", "1 cinnamon stick"
         let countPattern = #"(?i)^(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|a|an|\d+[\d\/\s\.]*)\s+([^,\.]+?)(?:\s*\([^)]*\))?(?:\s*,\s*[^,]*)?$"#
         
@@ -417,8 +417,18 @@ class LLMService: ObservableObject {
                         // Parse unit
                         var unit: String
                         if unitRange.location != NSNotFound,
-                           let unitString = Range(unitRange, in: trimmedLine).map({ String(trimmedLine[$0]) }) {
-                            unit = standardizeUnit(unitString)
+                           let unitRangeSwift = Range(unitRange, in: trimmedLine) {
+                            let unitRaw = String(trimmedLine[unitRangeSwift])
+                            // Guard against false-positive single-letter units (g/l) leaking from words like garlic/large
+                            if unitRaw.count == 1 {
+                                let nextIndex = unitRangeSwift.upperBound
+                                if nextIndex < trimmedLine.endIndex, trimmedLine[nextIndex].isLetter {
+                                    print("🛡️ Skipping 1-letter unit leak (\(unitRaw)) in: \(trimmedLine)")
+                                    // Skip this measurement match so count-based parsing can handle it
+                                    continue
+                                }
+                            }
+                            unit = standardizeUnit(unitRaw)
                         } else {
                             unit = "piece"
                         }
@@ -579,6 +589,21 @@ class LLMService: ObservableObject {
                             let amount = parseAmount(amountString)
                             var unit = "pieces"
                             var cleanIngredientName = cleanIngredientName(cleanName)
+                            // If name starts with optional size in parentheses then 'piece(s)', move that to unit
+                            if let rx = try? NSRegularExpression(pattern: #"(?i)^\s*(?:\(([^)]*)\)\s*)?(piece|pieces)\s+(.+)$"#),
+                               let m2 = rx.firstMatch(in: cleanIngredientName, options: [], range: NSRange(cleanIngredientName.startIndex..., in: cleanIngredientName)),
+                               m2.numberOfRanges >= 4 {
+                                let sizeText = (Range(m2.range(at: 1), in: cleanIngredientName).map { String(cleanIngredientName[$0]).lowercased() })
+                                let pieceWord = Range(m2.range(at: 2), in: cleanIngredientName).map { String(cleanIngredientName[$0]).lowercased() } ?? "pieces"
+                                if let restR = Range(m2.range(at: 3), in: cleanIngredientName) {
+                                    cleanIngredientName = String(cleanIngredientName[restR])
+                                }
+                                if let size = sizeText, !size.isEmpty {
+                                    unit = "\(size) \(pieceWord)"
+                                } else {
+                                    unit = pieceWord
+                                }
+                            }
                             // Append size descriptor as parenthetical if present in the raw text (but not for salt/pepper)
                             if !cleanIngredientName.lowercased().contains("salt") && !cleanIngredientName.lowercased().contains("pepper"),
                                let sizeText = extractSizeDescriptor(from: nameString) {
@@ -808,7 +833,7 @@ class LLMService: ObservableObject {
         let cleanString = ingredientString.trimmingCharacters(in: .whitespacesAndNewlines)
         
         // Try to extract amount and unit using regex (include full words to prevent leakage into name)
-        let pattern = #"(?i)(\d+[\d\/\s\.]*)\s*(cup|cups|teaspoon|teaspoons|tsp|tablespoon|tablespoons|tbsp|oz|ounce|ounces|pound|pounds|grams?|g|ml|milliliter|milliliters|liter|liters|l(?![a-z])|clove|cloves|piece|pieces|can|cans|jar|jars|bottle|bottles|package|packages|bag|bags|bunch|bunches|head|heads|slice|slices|small|medium|large|extra\s*large|xl)?\s*(.*)"#
+        let pattern = #"(?i)(\d+[\d\/\s\.]*)\s*(cup|cups|teaspoon|teaspoons|tsp|tablespoon|tablespoons|tbsp|oz|ounce|ounces|pound|pounds|grams?|g(?![a-z])|ml|milliliter|milliliters|liter|liters|l(?![a-z])|clove|cloves|piece|pieces|can|cans|jar|jars|bottle|bottles|package|packages|bag|bags|bunch|bunches|head|heads|slice|slices|small|medium|large|extra\s*large|xl)?\s*(.*)"#
         
         guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
               let match = regex.firstMatch(in: cleanString, options: [], range: NSRange(cleanString.startIndex..., in: cleanString)),
@@ -874,8 +899,19 @@ class LLMService: ObservableObject {
         
         var unit: String
         if unitRange.location != NSNotFound,
-           let unitString = Range(unitRange, in: cleanString).map({ String(cleanString[$0]) }) {
-            unit = standardizeUnit(unitString)
+           let unitRangeSwift = Range(unitRange, in: cleanString) {
+            let unitRaw = String(cleanString[unitRangeSwift])
+            if unitRaw.count == 1 {
+                let nextIndex = unitRangeSwift.upperBound
+                if nextIndex < cleanString.endIndex, cleanString[nextIndex].isLetter {
+                    // Let count-based or name cleanup handle; avoid stealing 'g' from 'garlic'
+                    unit = ""
+                } else {
+                    unit = standardizeUnit(unitRaw)
+                }
+            } else {
+                unit = standardizeUnit(unitRaw)
+            }
         } else {
             unit = ""
         }
@@ -883,14 +919,14 @@ class LLMService: ObservableObject {
         var cleanName = cleanIngredientName(nameString)
         // If the parsed unit is empty but the name starts with a unit word, move it to unit
         if unit.isEmpty {
-            if let m = try? NSRegularExpression(pattern: #"(?i)^(cup|cups|teaspoon|teaspoons|tsp|tablespoon|tablespoons|tbsp|oz|ounce|ounces|pound|pounds|grams?|g|ml|milliliter|milliliters|liter|liters|l)(?![a-z])\b"#)
+            if let m = try? NSRegularExpression(pattern: #"(?i)^(cup|cups|teaspoon|teaspoons|tsp|tablespoon|tablespoons|tbsp|oz|ounce|ounces|pound|pounds|grams?|g(?![a-z])|ml|milliliter|milliliters|liter|liters|l|clove|cloves|piece|pieces|can|cans|jar|jars|bottle|bottles|package|packages|bag|bags|bunch|bunches|head|heads|slice|slices)(?![a-z])\b"#)
                 .firstMatch(in: cleanName, options: [], range: NSRange(cleanName.startIndex..., in: cleanName)),
                m.numberOfRanges >= 2,
                let r = Range(m.range(at: 1), in: cleanName) {
                 let token = String(cleanName[r]).lowercased()
                 var shouldUse = true
-                // Prevent single-letter 'l' being taken from words like 'large'
-                if token == "l" {
+                // Prevent single-letter units 'l' or 'g' from leaking from words like 'large' or 'garlic'
+                if token == "l" || token == "g" {
                     let after = r.upperBound
                     if after < cleanName.endIndex, cleanName[after].isLetter {
                         shouldUse = false
@@ -899,6 +935,31 @@ class LLMService: ObservableObject {
                 if shouldUse {
                     unit = standardizeUnit(token)
                     cleanName = String(cleanName[r.upperBound...]).trimmingCharacters(in: .whitespaces)
+                }
+            }
+        }
+        // Container + size normalization at parse time (handles inputs like "(1-inch) piece fresh ginger")
+        do {
+            let startsWithPiece = (cleanName.range(of: #"(?i)^\s*(?:\(([^)]*)\)\s*)?(?:a|an|one)?\s*(piece|pieces)\b"#, options: .regularExpression) != nil)
+            if startsWithPiece || unit.lowercased().contains("piece") {
+                // Extract size from the original ingredient string if present
+                var sizeText: String = ""
+                if let m = try? NSRegularExpression(pattern: #"(?i)\((\d+(?:[\/\.]\d+)?-?inch)\)"#)
+                    .firstMatch(in: cleanString, options: [], range: NSRange(cleanString.startIndex..., in: cleanString)),
+                   m.numberOfRanges >= 2,
+                   let r = Range(m.range(at: 1), in: cleanString) {
+                    sizeText = String(cleanString[r]).lowercased()
+                }
+                // Move leading "(size) piece(s)" out of the name
+                cleanName = cleanName.replacingOccurrences(of: #"(?i)^\s*(?:\([^)]*\)\s*)?(?:a|an|one)?\s*(piece|pieces)\s+"#, with: "", options: .regularExpression)
+                // Drop leading freshness descriptor left behind
+                cleanName = cleanName.replacingOccurrences(of: #"(?i)^\s*fresh\s+"#, with: "", options: .regularExpression)
+                // Build unit with size if available
+                let pieceWord = unit.lowercased().contains("pieces") ? "pieces" : (unit.lowercased().contains("piece") ? "piece" : (startsWithPiece ? "piece" : unit))
+                if !sizeText.isEmpty {
+                    unit = sizeText + " " + pieceWord
+                } else {
+                    unit = pieceWord
                 }
             }
         }
@@ -1707,8 +1768,12 @@ class LLMService: ObservableObject {
     
     private func sanitizeIngredientList(_ ingredients: [Ingredient]) -> [Ingredient] {
         var result: [Ingredient] = []
+        var seen: Set<String> = []
         for ing in ingredients {
             let sanitized = sanitizeIngredient(ing)
+            let key = "\(sanitized.name.lowercased())|\(sanitized.unit.lowercased())|\(String(format: "%.4f", sanitized.amount))"
+            if seen.contains(key) { continue }
+            seen.insert(key)
             // Split salt and pepper combo if present
             let lower = sanitized.name.lowercased()
             if lower.contains("salt") && lower.contains("pepper") && lower.contains(" and ") {
@@ -1752,11 +1817,11 @@ class LLMService: ObservableObject {
                let ur = Range(m.range(at: 1), in: name) {
                 // Extract the matched leading unit token
                 let matchedToken = String(name[ur]).lowercased()
-                // If the token is a single-letter "l" from the start of a word like "large",
-                // do NOT interpret it as liters. Require that the character after the token
-                // is not a letter when the token length is 1.
-                var shouldMoveUnit = true
-                if matchedToken == "l" {
+					// If the token is a single-letter "l" or "g" from the start of a word like
+					// "large" or "garlic", do NOT interpret it as liters/grams. Require that the
+					// character after the token is not a letter when the token length is 1.
+					var shouldMoveUnit = true
+					if matchedToken == "l" || matchedToken == "g" {
                     let afterIndex = ur.upperBound
                     if afterIndex < name.endIndex, name[afterIndex].isLetter {
                         shouldMoveUnit = false
@@ -1764,17 +1829,30 @@ class LLMService: ObservableObject {
                 }
 
                 if shouldMoveUnit {
-                    // Move unit token to unit field if unit is empty
-                    if unit.isEmpty { unit = standardizeUnit(matchedToken) }
+                    // Always remove the leading unit token from the name
                     if let fullMatchRange = Range(m.range(at: 0), in: name) {
                         let sliceStart = fullMatchRange.upperBound
                         let slice = name[sliceStart..<name.endIndex]
                         name = String(slice)
                     }
+                    // Set unit only if it wasn't already set
+                    if unit.isEmpty { unit = standardizeUnit(matchedToken) }
                 }
             }
         }
-		// Preserve previous narrow fix: remove only a stray leading 's '
+
+		// 2.2) If name begins with a container word like "can"/"cans" and unit is empty or a generic count unit, move it to unit
+		if (unit.isEmpty || unit.lowercased() == "piece" || unit.lowercased() == "pieces") {
+			if let m = try? NSRegularExpression(pattern: #"(?i)^\s*(can|cans)\s+(.+)$"#)
+				.firstMatch(in: name, options: [], range: NSRange(name.startIndex..., in: name)),
+			   m.numberOfRanges >= 3,
+			   let ur = Range(m.range(at: 1), in: name),
+			   let nr = Range(m.range(at: 2), in: name) {
+				unit = standardizeUnit(String(name[ur]))
+				name = String(name[nr]).trimmingCharacters(in: .whitespaces)
+			}
+		}
+        // Preserve previous narrow fix in final name: remove only a stray leading 's '
         name = name.replacingOccurrences(of: #"(?i)^\s*s\s+"#, with: "", options: .regularExpression)
 
 		// 3.5) Combine any remaining plus-fragments and remove from name
@@ -1844,17 +1922,54 @@ class LLMService: ObservableObject {
         
         // 4) Drop non-purchasable notes and stray unit letters that can leak (e.g., leading "l" in "large")
         name = name.replacingOccurrences(of: #"(?i)\b(optional|or\s+a\s+mix|see\s+note|to\s+taste|for\s+serving)\b"#, with: "", options: .regularExpression)
-        // Remove a solitary leading 'l ' leftover from mis-parsing liters at name start (e.g., "l arge shallot")
-        name = name.replacingOccurrences(of: #"^(?i)\s*l\s+"#, with: "", options: .regularExpression)
+        // Remove a solitary leading single-letter unit like 'l ' or 'g ' ONLY when followed by a space and then a letter (e.g., "l arge", "g arlic")
+        name = name.replacingOccurrences(of: #"^(?i)\s*(?:(?<unit>[lg])\s+(?=[A-Za-z]))"#, with: "", options: .regularExpression)
         
         // 5) Normalize containers → core noun; capture size like 2-inch as unit if unit empty
         if let sizeRange = name.range(of: #"(?i)\b(\d+(?:[\/\.]\d+)?-?inch)\b"#, options: .regularExpression) {
             if unit.isEmpty { unit = String(name[sizeRange]).lowercased() }
         }
+        // If unit is piece(s), attach size descriptor from original text if present: "1-inch piece"
+        if unit.lowercased().contains("piece") {
+            if let sizeRange = originalName.range(of: #"(?i)\b(\d+(?:[\/\.]\d+)?-?inch)\b"#, options: .regularExpression) {
+                let sizeText = String(originalName[sizeRange]).lowercased()
+                if !unit.lowercased().contains(sizeText) {
+                    unit = sizeText + " " + unit
+                }
+            }
+        }
+        // If name begins with optional size in parentheses then piece/pieces, move to unit and set amount if needed
+        if let m = try? NSRegularExpression(pattern: #"(?i)^\s*(?:\(([^)]*)\)\s*)?(?:a|an|one)?\s*(piece|pieces)\s+(.+)$"#)
+            .firstMatch(in: name, options: [], range: NSRange(name.startIndex..., in: name)),
+           m.numberOfRanges >= 4,
+           let sizeR = Range(m.range(at: 1), in: name),
+           let ur = Range(m.range(at: 2), in: name),
+           let nr = Range(m.range(at: 3), in: name) {
+            let sizeInline = String(name[sizeR])
+            let pieceUnit = String(name[ur]).lowercased()
+            // Prefer inline size, else grab from original name if present
+            if !sizeInline.isEmpty {
+                unit = sizeInline.lowercased() + " " + (pieceUnit == "pieces" ? "pieces" : "piece")
+            } else if let sizeRange = originalName.range(of: #"(?i)\b(\d+(?:[\/\.]\d+)?-?inch)\b"#, options: .regularExpression) {
+                let sizeText = String(originalName[sizeRange]).lowercased()
+                unit = sizeText + " " + (pieceUnit == "pieces" ? "pieces" : "piece")
+            } else {
+                unit = pieceUnit == "pieces" ? "pieces" : "piece"
+            }
+            name = String(name[nr])
+            if amount <= 0 { amount = 1 }
+        }
         if let rx = try? NSRegularExpression(pattern: #"(?i)^(?:a|an|one)?\s*(knob|piece|clove|head)\s+of\s+(.+)$"#),
            let m = rx.firstMatch(in: name, options: [], range: NSRange(name.startIndex..., in: name)),
            m.numberOfRanges >= 3,
            let r2 = Range(m.range(at: 2), in: name) {
+            name = String(name[r2])
+        }
+        // Also strip a leading "piece(s) " when present (no "of")
+        if let rx = try? NSRegularExpression(pattern: #"(?i)^(?:a|an|one)?\s*(?:piece|pieces)\s+(.+)$"#),
+           let m = rx.firstMatch(in: name, options: [], range: NSRange(name.startIndex..., in: name)),
+           m.numberOfRanges >= 2,
+           let r2 = Range(m.range(at: 1), in: name) {
             name = String(name[r2])
         }
         
@@ -1881,6 +1996,38 @@ class LLMService: ObservableObject {
 
         // Final tidy
         name = name.replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
+
+		// Herb-specific fix: strip a stray leading single-letter 's ' before common herb names (e.g., "s dill" → "dill")
+		let herbList = ["dill","basil","parsley","cilantro","thyme","rosemary","sage","mint","tarragon","oregano","chives","scallion","scallions","green onion","green onions"]
+		if let m = try? NSRegularExpression(pattern: #"(?i)^\s*s\s+([a-z].*)$"#)
+			.firstMatch(in: name, options: [], range: NSRange(name.startIndex..., in: name)),
+		   m.numberOfRanges >= 2,
+		   let r1 = Range(m.range(at: 1), in: name) {
+			let rest = String(name[r1]).trimmingCharacters(in: .whitespaces)
+			let firstWord = rest.split(separator: " ").first.map(String.init)?.lowercased() ?? ""
+			if herbList.contains(firstWord) {
+				name = rest
+			}
+		}
+
+        // FINAL GUARD: If name still begins with a container word (piece/clove/slice/head), move it to unit
+        if let m = try? NSRegularExpression(pattern: #"(?i)^\s*(piece|pieces|clove|cloves|slice|slices|head|heads)\s+(.+)$"#)
+            .firstMatch(in: name, options: [], range: NSRange(name.startIndex..., in: name)),
+           m.numberOfRanges >= 3,
+           let ur = Range(m.range(at: 1), in: name),
+           let nr = Range(m.range(at: 2), in: name) {
+            let container = String(name[ur]).lowercased()
+            name = String(name[nr]).trimmingCharacters(in: .whitespaces)
+            if unit.isEmpty {
+                // Attach size if one was extracted earlier
+                if let sizeRange = originalName.range(of: #"(?i)\b(\d+(?:[\/\.]\d+)?-?inch)\b"#, options: .regularExpression) {
+                    let sizeText = String(originalName[sizeRange]).lowercased()
+                    unit = sizeText + " " + (container == "pieces" ? "pieces" : "piece")
+                } else {
+                    unit = container
+                }
+            }
+        }
         
         return Ingredient(name: name, amount: amount, unit: unit, category: ingredient.category)
     }
@@ -2168,9 +2315,14 @@ class LLMService: ObservableObject {
             options: .regularExpression
         )
 
-        // 4.5) Normalize generic containers like "knob of ginger" → "ginger"
+        // 4.5) Normalize generic containers like "knob of ginger" → "ginger"; also drop leading container words
         cleanedName = cleanedName.replacingOccurrences(
-            of: #"(?i)^(?:a|an|one)?\s*(knob|piece|slice|clove|head)\s+of\s+"#,
+            of: #"(?i)^(?:a|an|one)?\s*(knob|piece|pieces|slice|slices|clove|cloves|head|heads|can|cans|jar|jars|bottle|bottles|package|packages|bag|bags|bunch|bunches)\s+of\s+"#,
+            with: "",
+            options: .regularExpression
+        )
+        cleanedName = cleanedName.replacingOccurrences(
+            of: #"(?i)^\s*(?:knob|piece|pieces|slice|slices|clove|cloves|head|heads|can|cans|jar|jars|bottle|bottles|package|packages|bag|bags|bunch|bunches)\s+"#,
             with: "",
             options: .regularExpression
         )
@@ -2207,6 +2359,9 @@ class LLMService: ObservableObject {
         // 7) Remove dangling punctuation and collapse whitespace
         cleanedName = cleanedName.replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression)
         cleanedName = cleanedName.replacingOccurrences(of: #"\s*(?:,|;|:|\-|–)\s*$"#, with: "", options: .regularExpression)
+
+        // 7.2) Remove stray leading 's ' that can leak from plural unit removal (e.g., 's dill')
+        cleanedName = cleanedName.replacingOccurrences(of: #"(?i)^\s*s\s+"#, with: "", options: .regularExpression)
 
         // Fallback: remove single preparation words only at the very start or end (but preserve important descriptors)
         var changed = true
@@ -3474,6 +3629,8 @@ class LLMService: ObservableObject {
         ("oil", .pantry), // generic catch-all for cooking oils
 
         // Pantry: common spices that could collide with Produce keywords
+        ("cayenne pepper", .pantry),
+        ("cayenne", .pantry),
         ("peppercorn", .pantry),
         ("peppercorns", .pantry),
         ("black pepper", .pantry),
