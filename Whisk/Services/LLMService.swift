@@ -889,8 +889,8 @@ class LLMService: ObservableObject {
                let r = Range(m.range(at: 1), in: cleanName) {
                 let token = String(cleanName[r]).lowercased()
                 var shouldUse = true
-                // Prevent single-letter 'l' being taken from words like 'large'
-                if token == "l" {
+                // Prevent single-letter units 'l' or 'g' from leaking from words like 'large' or 'garlic'
+                if token == "l" || token == "g" {
                     let after = r.upperBound
                     if after < cleanName.endIndex, cleanName[after].isLetter {
                         shouldUse = false
@@ -1856,8 +1856,8 @@ class LLMService: ObservableObject {
         
         // 4) Drop non-purchasable notes and stray unit letters that can leak (e.g., leading "l" in "large")
         name = name.replacingOccurrences(of: #"(?i)\b(optional|or\s+a\s+mix|see\s+note|to\s+taste|for\s+serving)\b"#, with: "", options: .regularExpression)
-        // Remove a solitary leading 'l ' leftover from mis-parsing liters at name start (e.g., "l arge shallot")
-        name = name.replacingOccurrences(of: #"^(?i)\s*l\s+"#, with: "", options: .regularExpression)
+        // Remove a solitary leading 'l ' or 'g ' leftover from mis-parsing single-letter units at name start (e.g., "l arge shallot", "g arlic cloves")
+        name = name.replacingOccurrences(of: #"^(?i)\s*[lg]\s+"#, with: "", options: .regularExpression)
         
         // 5) Normalize containers → core noun; capture size like 2-inch as unit if unit empty
         if let sizeRange = name.range(of: #"(?i)\b(\d+(?:[\/\.]\d+)?-?inch)\b"#, options: .regularExpression) {
