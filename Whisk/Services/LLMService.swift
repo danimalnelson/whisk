@@ -1774,6 +1774,18 @@ class LLMService: ObservableObject {
                 }
             }
         }
+
+		// 2.2) If name begins with a container word like "can"/"cans" and unit is empty or a generic piece, move it to unit
+		if (unit.isEmpty || unit.lowercased() == "piece") {
+			if let m = try? NSRegularExpression(pattern: #"(?i)^(can|cans)\s+(.+)$"#)
+				.firstMatch(in: name, options: [], range: NSRange(name.startIndex..., in: name)),
+			   m.numberOfRanges >= 3,
+			   let ur = Range(m.range(at: 1), in: name),
+			   let nr = Range(m.range(at: 2), in: name) {
+				unit = standardizeUnit(String(name[ur]))
+				name = String(name[nr])
+			}
+		}
 		// Preserve previous narrow fix: remove only a stray leading 's '
         name = name.replacingOccurrences(of: #"(?i)^\s*s\s+"#, with: "", options: .regularExpression)
 
