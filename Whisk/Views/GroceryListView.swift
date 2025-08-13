@@ -147,19 +147,19 @@ struct GroceryListDetailView: View {
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Menu {
-                    Button(role: .destructive) {
-                        showingClearConfirm = true
-                    } label: {
-                        Label("Erase list", systemImage: "eraser")
-                    }
-                    ShareLink(item: shareText) {
-                        Label("Share list", systemImage: "square.and.arrow.up")
-                    }
                     Button {
                         showingRecipeInput = true
                     } label: {
                         Label("Add recipes", systemImage: "plus")
                     }
+                        ShareLink(item: shareText) {
+                            Label("Share list", systemImage: "square.and.arrow.up")
+                        }
+                        Button(role: .destructive) {
+                            showingClearConfirm = true
+                        } label: {
+                            Label("Remove all ingredients", systemImage: "eraser")
+                        }
                 } label: {
                     Image(systemName: "ellipsis.circle")
                         .font(.system(size: 20))
