@@ -71,9 +71,15 @@ class DataManager: ObservableObject {
         
         // Filter out water and other common household items
         let filteredIngredients = ingredients.filter { ingredient in
-            let lowercasedName = ingredient.name.lowercased()
-            let excludedItems = ["water", "tap water", "filtered water", "distilled water"]
-            return !excludedItems.contains(lowercasedName)
+            let lowercasedName = ingredient.name.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+            let excludedItems = [
+                "water", "tap water", "filtered water", "distilled water",
+                "ice water", "cold water", "warm water", "hot water", "lukewarm water"
+            ]
+            if excludedItems.contains(lowercasedName) { return false }
+            // Also exclude simple water patterns like "4 quarts water" once name is normalized to end with "water"
+            if lowercasedName.range(of: #"^(?:ice|cold|warm|hot|lukewarm)?\s*water$"#, options: .regularExpression) != nil { return false }
+            return true
         }
         
         print("🛒 Filtered out \(ingredients.count - filteredIngredients.count) common household items")
@@ -115,9 +121,14 @@ class DataManager: ObservableObject {
         
         // Filter out water and other common household items
         let filteredIngredients = ingredients.filter { ingredient in
-            let lowercasedName = ingredient.name.lowercased()
-            let excludedItems = ["water", "tap water", "filtered water", "distilled water"]
-            return !excludedItems.contains(lowercasedName)
+            let lowercasedName = ingredient.name.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+            let excludedItems = [
+                "water", "tap water", "filtered water", "distilled water",
+                "ice water", "cold water", "warm water", "hot water", "lukewarm water"
+            ]
+            if excludedItems.contains(lowercasedName) { return false }
+            if lowercasedName.range(of: #"^(?:ice|cold|warm|hot|lukewarm)?\s*water$"#, options: .regularExpression) != nil { return false }
+            return true
         }
         
         print("🛒 Filtered out \(ingredients.count - filteredIngredients.count) common household items")
