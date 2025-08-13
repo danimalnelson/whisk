@@ -43,6 +43,8 @@ struct RecipeInputView: View {
                     List {
                         ForEach(recipeEntries) { entry in
                             RecipeRowView(entry: entry)
+                                .listRowBackground(Color.clear)
+                                .background(Color.clear)
                         }
                         .onDelete { indexSet in
                             recipeEntries.remove(atOffsets: indexSet)
@@ -50,7 +52,7 @@ struct RecipeInputView: View {
                     }
                     .listStyle(PlainListStyle())
                     .scrollContentBackground(.hidden)
-                    .listRowBackground(Color.clear)
+                    .background(Color.clear)
                 }
                 
                 Spacer()
