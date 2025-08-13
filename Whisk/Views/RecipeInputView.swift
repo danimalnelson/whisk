@@ -53,6 +53,7 @@ struct RecipeInputView: View {
                         }
                     }
                     .listStyle(PlainListStyle())
+                    .scrollContentBackground(.hidden)
                 }
                 
                 Spacer()
@@ -80,7 +81,7 @@ struct RecipeInputView: View {
                 .padding(.horizontal)
             }
             .navigationTitle("Add recipes")
-            .navigationBarTitleDisplayMode(.inline)
+            .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: { dismiss() }) {
@@ -90,11 +91,15 @@ struct RecipeInputView: View {
                     .accessibilityLabel(Text("Close"))
                 }
             }
+            .toolbarBackground(.black, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
             .alert("Error", isPresented: $showError) {
                 Button("OK") { }
             } message: {
                 Text(errorMessage)
             }
+            .background(Color.black.edgesIgnoringSafeArea(.all))
+            .preferredColorScheme(.dark)
         }
     }
     
