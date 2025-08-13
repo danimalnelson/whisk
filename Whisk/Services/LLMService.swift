@@ -3474,6 +3474,8 @@ class LLMService: ObservableObject {
         ("oil", .pantry), // generic catch-all for cooking oils
 
         // Pantry: common spices that could collide with Produce keywords
+        ("cayenne pepper", .pantry),
+        ("cayenne", .pantry),
         ("peppercorn", .pantry),
         ("peppercorns", .pantry),
         ("black pepper", .pantry),
