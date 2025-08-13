@@ -1863,10 +1863,26 @@ class LLMService: ObservableObject {
         if let sizeRange = name.range(of: #"(?i)\b(\d+(?:[\/\.]\d+)?-?inch)\b"#, options: .regularExpression) {
             if unit.isEmpty { unit = String(name[sizeRange]).lowercased() }
         }
+        // If unit is piece(s), attach size descriptor from original text if present: "1-inch piece"
+        if unit.lowercased().contains("piece") {
+            if let sizeRange = originalName.range(of: #"(?i)\b(\d+(?:[\/\.]\d+)?-?inch)\b"#, options: .regularExpression) {
+                let sizeText = String(originalName[sizeRange]).lowercased()
+                if !unit.lowercased().contains(sizeText) {
+                    unit = sizeText + " " + unit
+                }
+            }
+        }
         if let rx = try? NSRegularExpression(pattern: #"(?i)^(?:a|an|one)?\s*(knob|piece|clove|head)\s+of\s+(.+)$"#),
            let m = rx.firstMatch(in: name, options: [], range: NSRange(name.startIndex..., in: name)),
            m.numberOfRanges >= 3,
            let r2 = Range(m.range(at: 2), in: name) {
+            name = String(name[r2])
+        }
+        // Also strip a leading "piece(s) " when present (no "of")
+        if let rx = try? NSRegularExpression(pattern: #"(?i)^(?:a|an|one)?\s*(?:piece|pieces)\s+(.+)$"#),
+           let m = rx.firstMatch(in: name, options: [], range: NSRange(name.startIndex..., in: name)),
+           m.numberOfRanges >= 2,
+           let r2 = Range(m.range(at: 1), in: name) {
             name = String(name[r2])
         }
         
