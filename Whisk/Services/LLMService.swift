@@ -943,34 +943,6 @@ class LLMService: ObservableObject {
             var unit = ""
             var amount = 0.0
 
-            // Split combined seasonings like "salt and pepper" into two entries upstream when list is validated
-            // If this is a seasoning and no explicit unit is present, default to "to taste"
-            let lc = cleanName.lowercased()
-            // Special-case: standardize pepper synonyms → black pepper
-            if lc == "pepper" || lc == "ground pepper" || lc == "black pepper" || lc == "ground black pepper" || lc == "freshly ground black pepper" || lc == "freshly ground pepper" {
-                unit = "to taste"
-                amount = 0.0
-                cleanName = "black pepper"
-            }
-            let seasoningKeywords: [String] = [
-                "salt", "kosher salt", "sea salt", "table salt",
-                "black pepper", "white pepper",
-                "red pepper flakes", "chili flakes", "chile flakes"
-            ]
-            if seasoningKeywords.contains(where: { lc.contains($0) }) || lc.contains("to taste") {
-                unit = "to taste"
-                amount = 0.0
-                // Collapse any salt variant names to "salt" and drop any semicolon note
-                let collapsed = cleanName
-                    .replacingOccurrences(of: #"(?i)\s*;\s*for\s+table\s+salt.*$"#, with: "", options: .regularExpression)
-                    .replacingOccurrences(of: #"\s*;\s*.*$"#, with: "", options: .regularExpression)
-                let lcCollapsed = collapsed.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-                if lcCollapsed.range(of: #"(?i)\b(?:sea|kosher|table)?\s*salt\b"#, options: .regularExpression) != nil,
-                   lcCollapsed.range(of: #"(?i)\bpepper\b"#, options: .regularExpression) == nil {
-                    cleanName = "salt"
-                }
-            }
-
             // Final name/unit normalization
             let category = determineCategory(cleanName)
             // Lowercase conjunctions inside name
@@ -990,8 +962,6 @@ class LLMService: ObservableObject {
                     cleanName = rebuilt.joined(separator: " ")
                 }
             }
-            unit = unit.trimmingCharacters(in: .whitespacesAndNewlines)
-            if unit.lowercased() == "to taste" { unit = "To taste" }
             return Ingredient(name: cleanName, amount: amount, unit: unit, category: category)
         }
         
@@ -1201,44 +1171,7 @@ class LLMService: ObservableObject {
                 }
             }
         }
-        // Seasoning handling: if no explicit unit and this is a seasoning, mark as "to taste"
-        if unit.isEmpty {
-            var lc = cleanName.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-            // Standardize pepper synonyms
-            if lc == "pepper" || lc == "ground pepper" || lc == "black pepper" || lc == "ground black pepper" || lc == "freshly ground black pepper" || lc == "freshly ground pepper" {
-                cleanName = "black pepper"
-                lc = cleanName.lowercased()
-                unit = "to taste"
-                amount = 0.0
-            } else {
-                let seasoningKeywords: [String] = [
-                    "salt", "kosher salt", "sea salt", "table salt",
-                    "black pepper", "white pepper",
-                    "red pepper flakes", "chili flakes", "chile flakes"
-                ]
-            if seasoningKeywords.contains(where: { lc.contains($0) }) || lc.contains("to taste") {
-                    unit = "to taste"
-                    amount = 0.0
-                // Collapse any salt variant names to "salt" and drop any semicolon note
-                let collapsed = cleanName
-                    .replacingOccurrences(of: #"(?i)\s*;\s*for\s+table\s+salt.*$"#, with: "", options: .regularExpression)
-                    .replacingOccurrences(of: #"\s*;\s*.*$"#, with: "", options: .regularExpression)
-                let lcCollapsed = collapsed.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-                if lcCollapsed.range(of: #"(?i)\b(?:sea|kosher|table)?\s*salt\b"#, options: .regularExpression) != nil,
-                   lcCollapsed.range(of: #"(?i)\bpepper\b"#, options: .regularExpression) == nil {
-                    cleanName = "salt"
-                }
-                }
-                // For serving rule (no explicit unit, not seasoning): set unit to For serving if indicated
-                if unit.isEmpty, (cleanString.range(of: #"(?i)\bfor\s+serving\b"#, options: .regularExpression) != nil || cleanName.range(of: #"(?i)\bfor\s+serving\b"#, options: .regularExpression) != nil) {
-                    unit = "For serving"
-                    amount = 0.0
-                    cleanName = cleanName.replacingOccurrences(of: #"(?i)\bfor\s+serving\b"#, with: "", options: .regularExpression)
-                    cleanName = cleanName.replacingOccurrences(of: #"(?i)\boptional\b"#, with: "", options: .regularExpression)
-                    cleanName = cleanName.replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression).trimmingCharacters(in: .whitespaces)
-                }
-            }
-        }
+        // Removed: duplicate seasoning 'to taste' and 'for serving' handling; centralized in processing stage
 
         // Prefer concrete examples after comma (such as/like/e.g.)
         // Otherwise, choose the segment that looks like a real ingredient (produce beats pantry),
@@ -1290,7 +1223,6 @@ class LLMService: ObservableObject {
             }
         }
         unit = unit.trimmingCharacters(in: .whitespacesAndNewlines)
-        if unit.lowercased() == "to taste" { unit = "To taste" }
 
         // If this is produce and unit is a count-like token or empty, round up fractional amounts
         let countUnits: Set<String> = ["", "piece", "pieces", "small", "medium", "large", "extra large", "heads", "head", "bunch", "bunches", "clove", "cloves", "sprig", "sprigs", "leaf", "leaves"]
@@ -2380,8 +2312,7 @@ class LLMService: ObservableObject {
             }
         }
 
-        // 2.6 Prefer whole counts for certain produce even when given in weight
-        // Cases: onions and whole garlic heads should display as whole items for shopping practicality
+        // 2.6 Prefer whole counts for certain produce even when given in weight (centralized for both paths)
         if isProduce {
             let weightUnits: Set<String> = ["ounces", "ounce", "grams", "gram", "g"]
             let isWeight = weightUnits.contains(standardizedUnit.lowercased())
