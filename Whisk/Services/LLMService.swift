@@ -208,12 +208,21 @@ class LLMService: ObservableObject {
             return result
         }
 
-        // Short-list optimization: for small ingredient sets, accept quick path without LLM
+        // Short-list optimization: for small ingredient sets, prefer quick path and augment with regex coverage
         if quickIngredients.count > 0 && quickIngredients.count <= 10 {
             print("✅ Small recipe (\(quickIngredients.count) items) via quick parser - skipping LLM call!")
+            var merged = quickIngredients
+            if let regexAugment = parseIngredientsWithRegex(ingredientSection) {
+                // Merge unique by name+unit+amount
+                let existingKeys = Set(merged.map { "\($0.name.lowercased())|\($0.unit.lowercased())|\(String(format: "%.4f", $0.amount))" })
+                for ing in regexAugment {
+                    let key = "\(ing.name.lowercased())|\(ing.unit.lowercased())|\(String(format: "%.4f", ing.amount))"
+                    if !existingKeys.contains(key) { merged.append(ing) }
+                }
+            }
             performanceStats.recordRegexSuccess()
             var recipe = Recipe(url: url)
-            recipe.ingredients = sanitizeIngredientList(quickIngredients)
+            recipe.ingredients = sanitizeIngredientList(merged)
             recipe.isParsed = true
             recipe.name = extractRecipeTitle(from: webpageContent)
             let result = RecipeParsingResult(recipe: recipe, success: true, error: nil)
