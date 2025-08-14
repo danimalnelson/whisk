@@ -191,7 +191,8 @@ class LLMService: ObservableObject {
         var lastDeterministicIngredients: [Ingredient] = quickIngredients
         // Only skip LLM on quick path when we clearly have full coverage
         let quickMultiSection = ingredientSection.range(of: #"(?i)\bfor\s+the\b"#, options: .regularExpression) != nil
-        let quickMinToSkip = quickMultiSection ? 12 : 10
+        // Require more coverage before skipping augmentation; use 12 as threshold even for smaller lists
+        let quickMinToSkip = quickMultiSection ? 12 : 12
         if quickIngredients.count >= quickMinToSkip {
             print("✅ Successfully parsed \(quickIngredients.count) ingredients via quick line parser - skipping LLM call!")
             performanceStats.recordRegexSuccess()
@@ -209,7 +210,7 @@ class LLMService: ObservableObject {
         }
 
         // Short-list optimization: for small ingredient sets, prefer quick path and augment with regex coverage
-        if quickIngredients.count > 0 && quickIngredients.count <= 10 {
+        if quickIngredients.count > 0 && quickIngredients.count <= 12 {
             print("✅ Small recipe (\(quickIngredients.count) items) via quick parser - skipping LLM call!")
             var merged = quickIngredients
             if let regexAugment = parseIngredientsWithRegex(ingredientSection) {
@@ -576,43 +577,48 @@ class LLMService: ObservableObject {
                             amount = gramsVal
                             unit = "grams"
                         } else {
-                            // Combine additional volumes like "+ 2 teaspoons" or "plus 2 tsp"
+                        // Combine additional volumes like "+ 2 teaspoons" or "plus 2 tsp" and "1 cup plus 2 tablespoons"
                             let plusPattern = "(?i)\\b(?:\\+|plus)\\s*(\\d+[\\d\\/\\s\\.]*)\\s*(cups?|tablespoons?|tbsp|teaspoons?|tsp)\\b"
                             if let plusRegex = try? NSRegularExpression(pattern: plusPattern) {
                                 let r = NSRange(cleanName.startIndex..., in: cleanName)
-                                if let pm = plusRegex.firstMatch(in: cleanName, options: [], range: r), pm.numberOfRanges >= 3,
-                                   let ar = Range(pm.range(at: 1), in: cleanName),
-                                   let ur = Range(pm.range(at: 2), in: cleanName) {
-                                    let addAmount = parseAmount(String(cleanName[ar]))
-                                    let addUnitRaw = String(cleanName[ur]).lowercased()
-                                    // Convert to teaspoons, then normalize
-                                    func toTeaspoons(_ amt: Double, _ u: String) -> Double {
-                                        switch u {
-                                        case "teaspoon", "teaspoons", "tsp": return amt
-                                        case "tablespoon", "tablespoons", "tbsp": return amt * 3.0
-                                        case "cup", "cups": return amt * 48.0
-                                        default: return amt
-                                        }
+                            let matches = plusRegex.matches(in: cleanName, options: [], range: r)
+                            if !matches.isEmpty {
+                                // Convert to teaspoons, then normalize
+                                func toTeaspoons(_ amt: Double, _ u: String) -> Double {
+                                    switch u {
+                                    case "teaspoon", "teaspoons", "tsp": return amt
+                                    case "tablespoon", "tablespoons", "tbsp": return amt * 3.0
+                                    case "cup", "cups": return amt * 48.0
+                                    default: return 0
                                     }
-                                    let baseTsp = toTeaspoons(amount, unit.lowercased())
-                                    let addTsp = toTeaspoons(addAmount, addUnitRaw)
-                                    let totalTsp = baseTsp + addTsp
-                                    // Prefer tablespoons if divisible by 3, else teaspoons
-                                    if abs(totalTsp.rounded() - totalTsp) < 1e-6, Int(totalTsp) % 3 == 0 {
+                                }
+                                var totalTsp = toTeaspoons(amount, unit.lowercased())
+                                for m in matches {
+                                    if m.numberOfRanges >= 3,
+                                       let ar = Range(m.range(at: 1), in: cleanName),
+                                       let ur = Range(m.range(at: 2), in: cleanName) {
+                                        let addAmount = parseAmount(String(cleanName[ar]))
+                                        let addUnitRaw = String(cleanName[ur]).lowercased()
+                                        totalTsp += toTeaspoons(addAmount, addUnitRaw)
+                                    }
+                                }
+                                if totalTsp > 0 {
+                                    if abs(totalTsp.rounded() - totalTsp) < 1e-6, Int(totalTsp) % 48 == 0 {
+                                        amount = roundToPlaces(totalTsp / 48.0, places: 2)
+                                        unit = "cups"
+                                    } else if Int(totalTsp) % 3 == 0 {
                                         amount = roundToPlaces(totalTsp / 3.0, places: 2)
                                         unit = "tablespoons"
-                                    } else if abs(totalTsp - Double(Int(totalTsp))) < 1e-6 {
-                                        amount = totalTsp
-                                        unit = "teaspoons"
                                     } else {
-                                        amount = roundToPlaces(totalTsp / 3.0, places: 2)
-                                        unit = "tablespoons"
+                                        amount = roundToPlaces(totalTsp, places: 2)
+                                        unit = "teaspoons"
                                     }
+                                }
                                 }
                             }
                         }
                         
-                        // Clean ingredient name - remove measurement units and parentheses
+                        // Clean ingredient name - remove measurement units and parentheses (but allow compound multi-ingredient lines to fall through later)
                         var cleanIngredientName = cleanIngredientName(cleanName)
                         // Extract size descriptors like "2-inch" into unit if none provided
                         if unit.isEmpty, let sizeText = extractSizeDescriptor(from: nameString) {
@@ -1160,6 +1166,32 @@ class LLMService: ObservableObject {
                         } else {
                             cleanName = before
                         }
+                    }
+                }
+            }
+
+            // Final fallback: parse compound "X, Y, and Z, for serving" lines into multiple name-only items
+            if !handled {
+                let lower = trimmedLine.lowercased()
+                if lower.contains("for serving") || lower.contains("for garnish") {
+                    var lhs = trimmedLine
+                    if let m = try? NSRegularExpression(pattern: #"(?i)\s*,\s*for\s+(serving|garnish).*?$"#).firstMatch(in: trimmedLine, options: [], range: NSRange(trimmedLine.startIndex..., in: trimmedLine)),
+                       let r = Range(m.range(at: 0), in: trimmedLine) {
+                        lhs = String(trimmedLine[..<r.lowerBound])
+                    }
+                    // split by commas and 'and'
+                    var parts = lhs.replacingOccurrences(of: #"\s+and\s+"#, with: ", ", options: .regularExpression)
+                        .split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    parts = parts.filter { !$0.isEmpty }
+                    if parts.count >= 2 {
+                        for p in parts {
+                            let nameOnly = cleanIngredientName(p)
+                            if nameOnly.isEmpty { continue }
+                            let ingredient = Ingredient(name: nameOnly, amount: 0.0, unit: "For serving", category: determineCategory(nameOnly))
+                            ingredients.append(ingredient)
+                            print("📋 Regex parsed (compound serving): \(nameOnly) - 0 For serving")
+                        }
+                        handled = true
                     }
                 }
             }
