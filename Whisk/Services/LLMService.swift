@@ -906,6 +906,55 @@ class LLMService: ObservableObject {
                     }
                 }
             }
+
+            // Fallback: split compound serving/garnish lines into multiple name-only items with unit "For serving"
+            if !handled {
+                let lower = trimmedLine.lowercased()
+                let servingTailRx = try? NSRegularExpression(pattern: #"(?i)\s*,\s*for\s+(serving|garnish|topping|dipping)\b.*$"#)
+                if let rx = servingTailRx,
+                   rx.firstMatch(in: trimmedLine, options: [], range: NSRange(trimmedLine.startIndex..., in: trimmedLine)) != nil {
+                    var lhs = trimmedLine
+                    if let m = rx.firstMatch(in: trimmedLine, options: [], range: NSRange(trimmedLine.startIndex..., in: trimmedLine)),
+                       let r = Range(m.range(at: 0), in: trimmedLine) {
+                        lhs = String(trimmedLine[..<r.lowerBound])
+                    }
+                    // Tokenize by commas and 'and', but keep any 'or' groups together
+                    var preliminary = lhs.replacingOccurrences(of: #"\s+and\s+"#, with: ", ", options: .regularExpression)
+                        .split(separator: ",")
+                        .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+                        .filter { !$0.isEmpty }
+                    // Merge adjacent parts connected by 'or'
+                    var parts: [String] = []
+                    var i = 0
+                    while i < preliminary.count {
+                        var current = preliminary[i]
+                        // If current or next contains a top-level ' or ', merge
+                        if i + 1 < preliminary.count {
+                            let next = preliminary[i + 1]
+                            // If either piece ends/starts forming an 'or' phrase, join them
+                            if current.range(of: #"(?i)\bor\b"#, options: .regularExpression) != nil ||
+                               next.range(of: #"(?i)\bor\b"#, options: .regularExpression) != nil {
+                                current = (current + " or " + next).replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+                                i += 2
+                                parts.append(current)
+                                continue
+                            }
+                        }
+                        parts.append(current)
+                        i += 1
+                    }
+                    if parts.count >= 2 {
+                        for p in parts {
+                            var nameOnly = cleanIngredientName(p)
+                            if nameOnly.isEmpty { continue }
+                            let ing = Ingredient(name: nameOnly, amount: 0.0, unit: "For serving", category: determineCategory(nameOnly))
+                            ingredients.append(ing)
+                            print("📋 Regex parsed (compound serving): \(nameOnly) - 0 For serving")
+                        }
+                        handled = true
+                    }
+                }
+            }
             
             // Final fallback: bare-name ingredients (no amount present), e.g., "Kosher salt (optional)"
             if !handled {
