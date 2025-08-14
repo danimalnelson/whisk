@@ -696,6 +696,33 @@ class LLMService: ObservableObject {
                             }
                         }
 
+                        // Singularize count-like units when amount is exactly 1 (preserve any leading size descriptor)
+                        if abs(finalAmount - 1.0) < 0.0001 {
+                            let pluralToSingular: [String: String] = [
+                                "pieces": "piece",
+                                "cloves": "clove",
+                                "slices": "slice",
+                                "heads": "head",
+                                "bunches": "bunch",
+                                "cans": "can",
+                                "jars": "jar",
+                                "bottles": "bottle",
+                                "packages": "package",
+                                "containers": "container",
+                                "bags": "bag",
+                                "leaves": "leaf",
+                                "sprigs": "sprig"
+                            ]
+                            let trimmedUnit = finalUnit.trimmingCharacters(in: .whitespaces)
+                            if !trimmedUnit.isEmpty {
+                                var parts = trimmedUnit.split(separator: " ").map(String.init)
+                                if let last = parts.last?.lowercased(), let singular = pluralToSingular[last] {
+                                    parts.removeLast()
+                                    parts.append(singular)
+                                    finalUnit = parts.joined(separator: " ")
+                                }
+                            }
+                        }
                         let ingredient = Ingredient(name: cleanIngredientName, amount: finalAmount, unit: finalUnit, category: category)
                         ingredients.append(ingredient)
                         
@@ -821,7 +848,34 @@ class LLMService: ObservableObject {
                             }
                         }
 
-                        let ingredient = Ingredient(name: cleaned, amount: finalAmount, unit: finalUnit, category: category)
+                            // Singularize count-like units when amount is exactly 1 (preserve any leading size descriptor)
+                            if abs(finalAmount - 1.0) < 0.0001 {
+                                let pluralToSingular: [String: String] = [
+                                    "pieces": "piece",
+                                    "cloves": "clove",
+                                    "slices": "slice",
+                                    "heads": "head",
+                                    "bunches": "bunch",
+                                    "cans": "can",
+                                    "jars": "jar",
+                                    "bottles": "bottle",
+                                    "packages": "package",
+                                    "containers": "container",
+                                    "bags": "bag",
+                                    "leaves": "leaf",
+                                    "sprigs": "sprig"
+                                ]
+                                let trimmedUnit = finalUnit.trimmingCharacters(in: .whitespaces)
+                                if !trimmedUnit.isEmpty {
+                                    var parts = trimmedUnit.split(separator: " ").map(String.init)
+                                    if let last = parts.last?.lowercased(), let singular = pluralToSingular[last] {
+                                        parts.removeLast()
+                                        parts.append(singular)
+                                        finalUnit = parts.joined(separator: " ")
+                                    }
+                                }
+                            }
+                            let ingredient = Ingredient(name: cleaned, amount: finalAmount, unit: finalUnit, category: category)
                         ingredients.append(ingredient)
                         print("🌿 Herb parsed: \(cleaned) - \(finalAmount) \(finalUnit) (\(category))")
                         handled = true
@@ -914,6 +968,11 @@ class LLMService: ObservableObject {
             if lowercasedName.contains(keyword) {
                 return category
             }
+        }
+        
+        // Check category keywords (force 'frozen' to Frozen category first)
+        if lowercasedName.contains("frozen") {
+            return .frozen
         }
         
         // Check category keywords
@@ -2446,6 +2505,34 @@ class LLMService: ObservableObject {
         // Remove any stray leading single-letter token (e.g., "s strawberries")
         name = name.replacingOccurrences(of: #"(?i)^\s*[a-z]\s+(?=[a-z])"#, with: "", options: .regularExpression)
         
+        // Singularize count-like units when amount is exactly 1 (preserve any leading size descriptor)
+        if abs(amount - 1.0) < 0.0001 {
+            let pluralToSingular: [String: String] = [
+                "pieces": "piece",
+                "cloves": "clove",
+                "slices": "slice",
+                "heads": "head",
+                "bunches": "bunch",
+                "cans": "can",
+                "jars": "jar",
+                "bottles": "bottle",
+                "packages": "package",
+                "containers": "container",
+                "bags": "bag",
+                "leaves": "leaf",
+                "sprigs": "sprig"
+            ]
+            let trimmedUnit = unit.trimmingCharacters(in: .whitespaces)
+            if !trimmedUnit.isEmpty {
+                var parts = trimmedUnit.split(separator: " ").map(String.init)
+                if let last = parts.last?.lowercased(), let singular = pluralToSingular[last] {
+                    parts.removeLast()
+                    parts.append(singular)
+                    unit = parts.joined(separator: " ")
+                }
+            }
+        }
+
         return Ingredient(name: name, amount: amount, unit: unit, category: ingredient.category)
     }
 
@@ -2947,6 +3034,15 @@ class LLMService: ObservableObject {
             cleanedName = cleanedName.replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression)
             cleanedName = cleanedName.trimmingCharacters(in: .whitespacesAndNewlines)
             cleanedName = cleanedName.isEmpty ? "fresh" : "fresh " + cleanedName
+        }
+
+        // 6.1) Ensure 'frozen' is preserved and appears at the start when present
+        if cleanedName.range(of: #"(?i)\bfrozen\b"#, options: .regularExpression) != nil {
+            // remove all 'frozen' occurrences first
+            cleanedName = cleanedName.replacingOccurrences(of: #"(?i)\bfrozen\b"#, with: "", options: .regularExpression)
+            cleanedName = cleanedName.replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression)
+            cleanedName = cleanedName.trimmingCharacters(in: .whitespacesAndNewlines)
+            cleanedName = cleanedName.isEmpty ? "frozen" : "frozen " + cleanedName
         }
 
         // 6.2) Remove quality/season descriptors like "ripe", "best-quality", "summer", "peak-season"
