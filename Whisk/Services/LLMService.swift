@@ -1435,9 +1435,7 @@ class LLMService: ObservableObject {
                                 }
                                 return false
                             }()
-                            if !hasMeasurementPattern(item) && !hasCountPrefix {
-                                item = "1 " + item
-                            }
+                            // Do not prefix an implicit count; leave items without explicit amounts as name-only
                             // Split common combined seasonings like "salt and pepper"
                             let lower = item.lowercased()
                             if lower.contains("salt and pepper") || lower.contains("salt & pepper") {
@@ -2486,7 +2484,7 @@ class LLMService: ObservableObject {
             let isIndividual = individualItems.contains { lowercasedName.contains($0) }
             if !isProduceCategory && !isIndividual {
                 standardizedUnit = ""
-                standardizedAmount = 0.0
+                // Leave amount at 0.0 if it was implicit; do not force 1
             }
         }
 
@@ -2498,7 +2496,7 @@ class LLMService: ObservableObject {
             let isWhitePepper = lc == "white pepper"
             let isPepperFlakes = lc == "red pepper flakes" || lc == "chili flakes" || lc == "chile flakes"
             if (isSalt || isBlackPepper || isWhitePepper || isPepperFlakes) {
-                if standardizedUnit.isEmpty || standardizedUnit.lowercased() == "piece" || standardizedUnit.lowercased() == "pieces" {
+                if standardizedAmount == 0.0 && (standardizedUnit.isEmpty || standardizedUnit.lowercased() == "piece" || standardizedUnit.lowercased() == "pieces") {
                     standardizedUnit = "To taste"
                     standardizedAmount = 0.0
                 }
@@ -2531,8 +2529,8 @@ class LLMService: ObservableObject {
                 }
             }
         } else {
-            // Default to 1 if no amount specified
-            processedAmount = 1.0
+        // Default to 0 when no amount specified (will be upgraded by processing if appropriate)
+        processedAmount = 0.0
         }
         
         // Standardize the amount (round to 2 decimal places for consistency)
