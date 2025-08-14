@@ -4407,6 +4407,7 @@ class LLMService: ObservableObject {
         // Keep these descriptors in ingredient names
         "fresh", // keep e.g. "fresh basil" per requirement
         "frozen", // keep e.g. "frozen sour cherries" per requirement
+        "whipped", // keep e.g. "whipped cream" as a product label
         "pitted", // keep e.g. "pitted kalamata olives"
         "salted", "unsalted",
         "sweet", "sour", "bitter", "spicy", "hot", "mild",
