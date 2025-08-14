@@ -103,7 +103,62 @@ class LLMService: ObservableObject {
         }
         
         // Extract ingredient section and try deterministic parsing paths first
-        let ingredientSection = extractIngredientSection(from: webpageContent)
+        var ingredientSection = extractIngredientSection(from: webpageContent)
+
+        // HTML list extraction: prefer <li> items near an Ingredients marker when available
+        do {
+            let html = webpageContent
+            let listPatterns = [#"<ul[^>]*>([\s\S]*?)</ul>"#, #"<ol[^>]*>([\s\S]*?)</ol>"#]
+            var bestItems: [String] = []
+            for pattern in listPatterns {
+                if let rx = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) {
+                    let matches = rx.matches(in: html, options: [], range: NSRange(html.startIndex..., in: html))
+                    for m in matches {
+                        guard m.numberOfRanges >= 2, let inner = Range(m.range(at: 1), in: html) else { continue }
+                        // proximity check
+                        let fullRange = m.range(at: 0)
+                        var isNearIngredients = false
+                        if let fr = Range(fullRange, in: html) {
+                            let preEnd = fr.lowerBound
+                            let preStart = html.index(preEnd, offsetBy: -1500, limitedBy: html.startIndex) ?? html.startIndex
+                            let pre = html[preStart..<preEnd].lowercased()
+                            if pre.contains("ingredients") || pre.contains("ingredient") { isNearIngredients = true }
+                        }
+                        // extract <li>
+                        let listContent = String(html[inner])
+                        if let liRx = try? NSRegularExpression(pattern: #"<li[^>]*>([\s\S]*?)</li>"#, options: [.caseInsensitive]) {
+                            let liMatches = liRx.matches(in: listContent, options: [], range: NSRange(listContent.startIndex..., in: listContent))
+                            var items: [String] = []
+                            for lm in liMatches {
+                                if lm.numberOfRanges >= 2, let lr = Range(lm.range(at: 1), in: listContent) {
+                                    var item = String(listContent[lr])
+                                        .replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+                                        .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+                                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                                    if item.isEmpty { continue }
+                                    items.append(item)
+                                }
+                            }
+                            if !items.isEmpty {
+                                // require most items have measurement or count for acceptance
+                                var withMeasureOrCount = 0
+                                let countRx = try? NSRegularExpression(pattern: "(?i)^(?:one|two|three|four|five|six|seven|eight|nine|ten|a|an|\\d|[¼½¾⅐⅑⅒⅓⅔⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞])")
+                                for i in items {
+                                    let hasCount = (countRx?.firstMatch(in: i, options: [], range: NSRange(i.startIndex..., in: i)) != nil)
+                                    if hasMeasurementPattern(i) || hasCount { withMeasureOrCount += 1 }
+                                }
+                                let accept = isNearIngredients && withMeasureOrCount >= max(3, Int(Double(items.count) * 0.5))
+                                if accept && items.count > bestItems.count { bestItems = items }
+                            }
+                        }
+                    }
+                }
+            }
+            if !bestItems.isEmpty {
+                ingredientSection = bestItems.joined(separator: "\n")
+                print("📋 Using HTML list ingredients (\(bestItems.count) items)")
+            }
+        }
 
         // 🚀 QUICK PATH: Parse each line individually (robust against formatting) before regex/LLM
         let quickLines = ingredientSection
@@ -132,6 +187,8 @@ class LLMService: ObservableObject {
                 quickIngredients.append(ing)
             }
         }
+        // Keep track of a deterministic fallback set if LLM fails
+        var lastDeterministicIngredients: [Ingredient] = quickIngredients
         // Only skip LLM on quick path when we clearly have full coverage
         let quickMultiSection = ingredientSection.range(of: #"(?i)\bfor\s+the\b"#, options: .regularExpression) != nil
         let quickMinToSkip = quickMultiSection ? 12 : 10
@@ -146,6 +203,23 @@ class LLMService: ObservableObject {
             cacheResult(result, for: url)
             let totalTime = CFAbsoluteTimeGetCurrent() - totalStartTime
             print("⏱️ Total time (quick parsing): \(String(format: "%.2f", totalTime))s")
+            print("⏱️ === Recipe Parsing End ===")
+            performanceStats.printStats()
+            return result
+        }
+
+        // Short-list optimization: for small ingredient sets, accept quick path without LLM
+        if quickIngredients.count > 0 && quickIngredients.count <= 10 {
+            print("✅ Small recipe (\(quickIngredients.count) items) via quick parser - skipping LLM call!")
+            performanceStats.recordRegexSuccess()
+            var recipe = Recipe(url: url)
+            recipe.ingredients = sanitizeIngredientList(quickIngredients)
+            recipe.isParsed = true
+            recipe.name = extractRecipeTitle(from: webpageContent)
+            let result = RecipeParsingResult(recipe: recipe, success: true, error: nil)
+            cacheResult(result, for: url)
+            let totalTime = CFAbsoluteTimeGetCurrent() - totalStartTime
+            print("⏱️ Total time (quick small): \(String(format: "%.2f", totalTime))s")
             print("⏱️ === Recipe Parsing End ===")
             performanceStats.printStats()
             return result
@@ -173,6 +247,8 @@ class LLMService: ObservableObject {
                 return result
             } else {
                 print("⚠️ Regex parsed only \(regexParsedIngredients.count) ingredients; falling back to LLM for completeness")
+                // Update deterministic fallback
+                if !regexParsedIngredients.isEmpty { lastDeterministicIngredients = regexParsedIngredients }
             }
         }
         
@@ -186,7 +262,28 @@ class LLMService: ObservableObject {
         
         // Call LLM
         let llmStartTime = CFAbsoluteTimeGetCurrent()
-        let response = try await callLLM(prompt: prompt)
+        let response: String
+        do {
+            response = try await callLLM(prompt: prompt)
+        } catch {
+            // Graceful fallback to deterministic results if LLM aborts or times out
+            if !lastDeterministicIngredients.isEmpty {
+                print("❌ LLM call failed (\(error.localizedDescription)); returning deterministic parsed ingredients instead")
+                var recipe = Recipe(url: url)
+                recipe.ingredients = sanitizeIngredientList(lastDeterministicIngredients)
+                recipe.isParsed = true
+                recipe.name = extractRecipeTitle(from: webpageContent)
+                let result = RecipeParsingResult(recipe: recipe, success: true, error: nil)
+                cacheResult(result, for: url)
+                let totalTime = CFAbsoluteTimeGetCurrent() - totalStartTime
+                print("⏱️ Total time (fallback deterministic): \(String(format: "%.2f", totalTime))s")
+                print("⏱️ === Recipe Parsing End ===")
+                performanceStats.printStats()
+                return result
+            } else {
+                throw error
+            }
+        }
         let llmTime = CFAbsoluteTimeGetCurrent() - llmStartTime
         print("⏱️ LLM processing: \(String(format: "%.2f", llmTime))s")
         
