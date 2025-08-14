@@ -441,8 +441,9 @@ class LLMService: ObservableObject {
         let lines = content.components(separatedBy: .newlines)
         var ingredients: [Ingredient] = []
         
-        // Pattern A: measurement-based (amount + measurable unit + name). Match plural before singular to avoid leaving trailing 's'.
-        let ingredientPattern = #"(?i)(\d+[\d\/\s\.]*)\s*(cups?|tablespoons?|tbsp|teaspoons?|tsp|ounces?|oz|pounds?|lb|lbs|grams?|g(?![a-z])|kg|milliliters?|ml|liters?|pint|pints|quart|quarts|gallon|gallons|cloves?|sprigs?|bunches?|heads?|leaves?|pieces?)\s+([^,\.]+?)(?:\s*\([^)]*\))?(?:\s*,\s*[^,]*)?$"#
+        // Pattern A: measurement-based (amount + optional parenthetical size + unit + name). Includes containers.
+        // Use a non-capturing group for the parenthetical so capture indices remain stable.
+        let ingredientPattern = #"(?i)^\s*(\d+[\d\/\s\.]*)\s*(?:\([^)]*\)\s*)?(cups?|tablespoons?|tbsp|teaspoons?|tsp|ounces?|oz|pounds?|lb|lbs|grams?|g(?![a-z])|kg|milliliters?|ml|liters?|l(?![a-z])|pint|pints|quart|quarts|gallon|gallons|cloves?|sprigs?|bunches?|heads?|leaves?|pieces?|cans?|jars?|bottles?|containers?|packages?|bags?)\s+([^,\.]+?)(?:\s*,\s*[^,]*)?$"#
         // Pattern B: count-based (amount + name without explicit unit): e.g., "8 scallions", "3 star anise", "1 cinnamon stick"
         let countPattern = #"(?i)^(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|a|an|\d+[\d\/\s\.]*)\s+([^,\.]+?)(?:\s*\([^)]*\))?(?:\s*,\s*[^,]*)?$"#
         
@@ -523,7 +524,7 @@ class LLMService: ObservableObject {
                         // Parse amount (handle fractions)
                         var amount = parseAmount(amountString)
                         
-                        // Parse unit
+                        // Parse unit (attach parenthetical size if present between amount and unit)
                         var unit: String
                         if unitRange.location != NSNotFound,
                            let unitRangeSwift = Range(unitRange, in: trimmedLine) {
@@ -538,6 +539,20 @@ class LLMService: ObservableObject {
                                 }
                             }
                             unit = standardizeUnit(unitRaw)
+                            // Look back between amount and unit for a parenthetical size and include it in the unit
+                            if let amountR = Range(amountRange, in: trimmedLine) {
+                                let between = trimmedLine[amountR.upperBound..<unitRangeSwift.lowerBound]
+                                if let sizeMatch = between.range(of: #"\(([^)]*?)\)"#, options: .regularExpression) {
+                                    let sizeText = String(between[sizeMatch]).trimmingCharacters(in: CharacterSet(charactersIn: "() "))
+                                    if !sizeText.isEmpty {
+                                        // normalize: "9 ounce" → "9-ounce"
+                                        let normalizedSize = sizeText.replacingOccurrences(of: #"(?i)\b(ounce|ounces)\b"#, with: "ounce", options: .regularExpression)
+                                            .replacingOccurrences(of: #"\s+"#, with: "-", options: .regularExpression)
+                                            .lowercased()
+                                        unit = "\(normalizedSize) \(unit)"
+                                    }
+                                }
+                            }
                         } else {
                             unit = "piece"
                         }
@@ -699,6 +714,24 @@ class LLMService: ObservableObject {
                             let amount = parseAmount(amountString)
                             var unit = ""
                             var cleanIngredientName = cleanIngredientName(cleanName)
+                            // Container-first names with optional size: move container to unit and attach size
+                            if let rx = try? NSRegularExpression(pattern: #"(?i)^\s*(?:\(([^)]*)\)\s*)?(can|cans|package|packages|jar|jars|container|containers|bag|bags|bottle|bottles)\s+(.+)$"#),
+                               let m2 = rx.firstMatch(in: cleanIngredientName, options: [], range: NSRange(cleanIngredientName.startIndex..., in: cleanIngredientName)),
+                               m2.numberOfRanges >= 4 {
+                                let sizeText = (Range(m2.range(at: 1), in: cleanIngredientName).map { String(cleanIngredientName[$0]).trimmingCharacters(in: .whitespaces) })
+                                let container = Range(m2.range(at: 2), in: cleanIngredientName).map { String(cleanIngredientName[$0]).lowercased() } ?? "package"
+                                if let restR = Range(m2.range(at: 3), in: cleanIngredientName) {
+                                    cleanIngredientName = String(cleanIngredientName[restR]).trimmingCharacters(in: .whitespaces)
+                                }
+                                if let size = sizeText, !size.isEmpty {
+                                    let normalizedSize = size.replacingOccurrences(of: #"(?i)\b(ounce|ounces)\b"#, with: "ounce", options: .regularExpression)
+                                        .replacingOccurrences(of: #"\s+"#, with: "-", options: .regularExpression)
+                                        .lowercased()
+                                    unit = "\(normalizedSize) \(standardizeUnit(container))"
+                                } else {
+                                    unit = standardizeUnit(container)
+                                }
+                            }
                             // If name starts with optional size in parentheses then 'piece(s)', move that to unit
                             if let rx = try? NSRegularExpression(pattern: #"(?i)^\s*(?:\(([^)]*)\)\s*)?(piece|pieces)\s+(.+)$"#),
                                let m2 = rx.firstMatch(in: cleanIngredientName, options: [], range: NSRange(cleanIngredientName.startIndex..., in: cleanIngredientName)),
@@ -782,6 +815,31 @@ class LLMService: ObservableObject {
                         let ingredient = Ingredient(name: cleaned, amount: finalAmount, unit: finalUnit, category: category)
                         ingredients.append(ingredient)
                         print("🌿 Herb parsed: \(cleaned) - \(finalAmount) \(finalUnit) (\(category))")
+                        handled = true
+                    }
+                }
+            }
+            
+            // Final fallback: bare-name ingredients (no amount present), e.g., "Kosher salt (optional)"
+            if !handled {
+                // If the line has letters, no leading number, and doesn't look like an instruction, include as amount 0 with empty unit
+                if trimmedLine.range(of: #"(?i)[a-z]"#, options: .regularExpression) != nil,
+                   trimmedLine.range(of: #"^\s*(?:one|two|three|four|five|six|seven|eight|nine|ten|a|an|\d)\b"#, options: .regularExpression) == nil {
+                    var nameOnly = cleanIngredientName(trimmedLine)
+                    // Strip parentheticals like (optional)
+                    nameOnly = nameOnly.replacingOccurrences(of: #"\s*\([^)]*\)\s*"#, with: " ", options: .regularExpression)
+                    nameOnly = nameOnly.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let lower = nameOnly.lowercased()
+                    // Exclude obvious non-ingredient lines by keywords already checked above
+                    var isInstruction = false
+                    for keyword in nonIngredientKeywords {
+                        if lower.contains(keyword.lowercased()) { isInstruction = true; break }
+                    }
+                    if !isInstruction && nameOnly.count >= 2 {
+                        let category = determineCategory(nameOnly)
+                        let ingredient = Ingredient(name: nameOnly, amount: 0.0, unit: "", category: category)
+                        ingredients.append(ingredient)
+                        print("📋 Regex parsed (name-only): \(nameOnly) - 0 ")
                         handled = true
                     }
                 }
