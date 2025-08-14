@@ -4280,6 +4280,7 @@ class LLMService: ObservableObject {
         ("oil", .pantry), // generic catch-all for cooking oils
 
         // Pantry: common spices that could collide with Produce keywords
+        ("garlic powder", .pantry),
         ("cayenne pepper", .pantry),
         ("cayenne", .pantry),
         ("peppercorn", .pantry),
@@ -4374,7 +4375,7 @@ class LLMService: ObservableObject {
             "flour", "sugar", "salt", "sauce", "pasta", "rice", "bean", "beans", "canned",
             
             // Spices & seasonings
-            "spice", "spices", "peppercorn", "peppercorns", "seasoning", "seasonings",
+            "spice", "spices", "peppercorn", "peppercorns", "seasoning", "seasonings", "powder",
 
             // Oils & fats
             "oil", "olive oil", "vegetable oil", "canola oil", "avocado oil", "grapeseed oil",
