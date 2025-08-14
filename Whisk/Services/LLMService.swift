@@ -1768,10 +1768,7 @@ class LLMService: ObservableObject {
                         print("Parsed ingredient: \(ingredient.name) - \(ingredient.amount) \(ingredient.unit) (\(ingredient.category))")
                     }
                     
-                    // Post-processing: attach "For serving" unit when mentioned near the ingredient in content
-                    let withForServing = parsedIngredients.map { ing in applyForServingIfMentioned(ing, originalContent: originalContent) }
-                    
-                    recipe.ingredients = sanitizeIngredientList(withForServing)
+                    recipe.ingredients = sanitizeIngredientList(parsedIngredients)
                     print("Total ingredients parsed: \(recipe.ingredients.count)")
                     
                     // Check if we have enough ingredients (most recipes have 10-20 ingredients)
@@ -2092,27 +2089,7 @@ class LLMService: ObservableObject {
         return result
     }
 
-    // Attach "For serving" unit post-LLM when the phrase appears near the ingredient in the original content
-    private func applyForServingIfMentioned(_ ingredient: Ingredient, originalContent: String) -> Ingredient {
-        // Do not override meaningful, non-empty units; also do not override positive amounts
-        let unitLower = ingredient.unit.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if ingredient.amount > 0 { return ingredient }
-        if !unitLower.isEmpty && unitLower != "piece" && unitLower != "pieces" { return ingredient }
-
-        // Look for "for serving" on the same line as the ingredient name
-        let contentLower = originalContent.lowercased()
-        let nameLower = ingredient.name.lowercased()
-        guard contentLower.contains("for serving"), contentLower.contains(nameLower) else { return ingredient }
-        for line in contentLower.components(separatedBy: .newlines) {
-            if line.contains(nameLower) && line.contains("for serving") {
-                var adjusted = ingredient
-                adjusted.amount = 0.0
-                adjusted.unit = "For serving"
-                return adjusted
-            }
-        }
-        return ingredient
-    }
+    // Removed post-LLM 'for serving' attachment to avoid duplication; handled centrally in processAndStandardizeIngredient
     
     private func sanitizeIngredient(_ ingredient: Ingredient) -> Ingredient {
 		var name = ingredient.name
@@ -2651,7 +2628,7 @@ class LLMService: ObservableObject {
         }
         
         // Handle "for greasing" or similar non-measurable units
-        if lowercasedUnit.contains("greasing") || lowercasedUnit.contains("garnish") || lowercasedUnit.contains("to taste") {
+        if lowercasedUnit.contains("greasing") || lowercasedUnit.contains("garnish") {
             return ""
         }
         
