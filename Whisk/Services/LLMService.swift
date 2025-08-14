@@ -1033,7 +1033,7 @@ class LLMService: ObservableObject {
                 rawName = "garlic"
             }
         }
-        if let m = try? NSRegularExpression(pattern: #"(?i)^\s*(?:\(([^)]*)\)\s*)?(?:a|an|one)?\s*(can|cans|package|packages|jar|jars|bottle|bottles|container|containers|bag|bags|bunch|bunches|head|heads|slice|slices|clove|cloves|piece|pieces)\s+(.+)$"#)
+        if let m = try? NSRegularExpression(pattern: #"(?i)^\s*(?:\d+[\d\/\s\.]*)?\s*(?:\(([^)]*)\)\s*)?(?:a|an|one)?\s*(can|cans|package|packages|jar|jars|bottle|bottles|container|containers|bag|bags|bunch|bunches|head|heads|slice|slices|clove|cloves|piece|pieces)\s+(.+)$"#)
             .firstMatch(in: rawName, options: [], range: NSRange(rawName.startIndex..., in: rawName)),
            m.numberOfRanges >= 4,
            let rSizeAll = Range(m.range(at: 1), in: rawName),
