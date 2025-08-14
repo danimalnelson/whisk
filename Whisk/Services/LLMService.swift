@@ -970,9 +970,14 @@ class LLMService: ObservableObject {
             }
         }
         
-        // Check category keywords (force 'frozen' to Frozen category first)
+        // Check category keywords (force 'frozen' to Frozen category first),
+        // only when 'frozen' refers to the ingredient state, not a product name like "frozen yogurt".
         if lowercasedName.contains("frozen") {
-            return .frozen
+            // If it already includes another explicit category word like 'yogurt' (dairy) or 'drink' (beverages),
+            // allow the normal keyword logic below to decide; otherwise force Frozen.
+            let otherCategoryHints = ["yogurt", "milk", "cream", "juice", "drink", "beverage", "broth", "stock"]
+            let hasOtherHint = otherCategoryHints.contains { lowercasedName.contains($0) }
+            if !hasOtherHint { return .frozen }
         }
         
         // Check category keywords
@@ -4328,6 +4333,7 @@ class LLMService: ObservableObject {
     private let preservedWords: Set<String> = [
         // Keep these descriptors in ingredient names
         "fresh", // keep e.g. "fresh basil" per requirement
+        "frozen", // keep e.g. "frozen sour cherries" per requirement
         "pitted", // keep e.g. "pitted kalamata olives"
         "salted", "unsalted",
         "sweet", "sour", "bitter", "spicy", "hot", "mild",
@@ -4338,7 +4344,7 @@ class LLMService: ObservableObject {
     private let preparationWords: Set<String> = [
         // Preparation/state words
         "uncooked", "drained", "chopped", "sliced", "diced", "minced",
-        "crushed", "whole", "raw", "cooked", "roasted", "toasted", "frozen", "thawed", 
+        "crushed", "whole", "raw", "cooked", "roasted", "toasted", "thawed", 
         "warm", "cold", "hot", "softened", "melted", "chilled", "room temperature", "room temp",
         "soft", "hard", "ripe", "unripe", "overripe", "underripe",
         
