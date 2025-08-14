@@ -4227,6 +4227,12 @@ class LLMService: ObservableObject {
         ("gelatin", .pantry),
         ("gelatine", .pantry),
 
+        // Pantry: chile/pepper flake seasonings
+        ("red pepper flakes", .pantry),
+        ("crushed red pepper", .pantry),
+        ("chili flakes", .pantry),
+        ("chile flakes", .pantry),
+
         // Dairy: whipped toppings and creams (brand-inclusive)
         ("whipped topping", .dairy),
         ("whipped cream", .dairy),
