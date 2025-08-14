@@ -451,9 +451,9 @@ class LLMService: ObservableObject {
         let lines = content.components(separatedBy: .newlines)
         var ingredients: [Ingredient] = []
         
-        // Pattern A: measurement-based (amount + optional parenthetical size + unit + name). Includes containers.
+        // Pattern A: measurement-based (amount + optional parenthetical size + unit + name). Includes containers and size units.
         // Use a non-capturing group for the parenthetical so capture indices remain stable.
-        let ingredientPattern = #"(?i)^\s*(\d+[\d\/\s\.]*)\s*(?:\([^)]*\)\s*)?(cups?|tablespoons?|tbsp|teaspoons?|tsp|ounces?|oz|pounds?|lb|lbs|grams?|g(?![a-z])|kg|milliliters?|ml|liters?|l(?![a-z])|pint|pints|quart|quarts|gallon|gallons|cloves?|sprigs?|bunches?|heads?|leaves?|pieces?|cans?|jars?|bottles?|containers?|packages?|bags?)\s+([^,\.]+?)(?:\s*,\s*[^,]*)?$"#
+        let ingredientPattern = #"(?i)^\s*(\d+[\d\/\s\.]*)\s*(?:\([^)]*\)\s*)?(cups?|tablespoons?|tbsp|teaspoons?|tsp|ounces?|oz|pounds?|lb|lbs|grams?|g(?![a-z])|kg|milliliters?|ml|liters?|l(?![a-z])|pint|pints|quart|quarts|gallon|gallons|small|medium|large|extra\s*large|xl|cloves?|sprigs?|bunches?|heads?|leaves?|pieces?|cans?|jars?|bottles?|containers?|packages?|bags?)\s+([^,\.]+?)(?:\s*,\s*[^,]*)?$"#
         // Pattern B: count-based (amount + name without explicit unit): e.g., "8 scallions", "3 star anise", "1 cinnamon stick"
         let countPattern = #"(?i)^(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|a|an|\d+[\d\/\s\.]*)\s+([^,\.]+?)(?:\s*\([^)]*\))?(?:\s*,\s*[^,]*)?$"#
         
@@ -476,11 +476,29 @@ class LLMService: ObservableObject {
         
         for line in lines {
             let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Normalize unicode vulgar fractions to ASCII (e.g., ½ → 1/2) so regex can match amounts
+            let normalizedLine: String = {
+                var s = trimmedLine
+                if let rx = try? NSRegularExpression(pattern: "(?i)([0-9])([¼½¾⅐⅑⅒⅓⅔⅕⅖⅗⅘⅙⅚⅛⅜⅝⅞])") {
+                    s = rx.stringByReplacingMatches(in: s, options: [], range: NSRange(s.startIndex..., in: s), withTemplate: "$1 $2")
+                }
+                let map: [Character: String] = [
+                    "¼": "1/4", "½": "1/2", "¾": "3/4",
+                    "⅐": "1/7", "⅑": "1/9", "⅒": "1/10",
+                    "⅓": "1/3", "⅔": "2/3",
+                    "⅕": "1/5", "⅖": "2/5", "⅗": "3/5", "⅘": "4/5",
+                    "⅙": "1/6", "⅚": "5/6",
+                    "⅛": "1/8", "⅜": "3/8", "⅝": "5/8", "⅞": "7/8"
+                ]
+                var out = ""
+                for ch in s { out.append(map[ch] ?? String(ch)) }
+                return out
+            }()
             if trimmedLine.isEmpty { continue }
             
             var handled = false
             // Try measurement-based first; if no match, try count-based
-            let matches = regex.matches(in: trimmedLine, options: [], range: NSRange(trimmedLine.startIndex..., in: trimmedLine))
+            let matches = regex.matches(in: normalizedLine, options: [], range: NSRange(normalizedLine.startIndex..., in: normalizedLine))
             
             for match in matches {
                 if match.numberOfRanges >= 4 {
@@ -488,8 +506,8 @@ class LLMService: ObservableObject {
                     let unitRange = match.range(at: 2)
                     let nameRange = match.range(at: 3)
                     
-                    if let amountString = Range(amountRange, in: trimmedLine).map({ String(trimmedLine[$0]) }),
-                       let nameString = Range(nameRange, in: trimmedLine).map({ String(trimmedLine[$0]) }) {
+                    if let amountString = Range(amountRange, in: normalizedLine).map({ String(normalizedLine[$0]) }),
+                       let nameString = Range(nameRange, in: normalizedLine).map({ String(normalizedLine[$0]) }) {
                         
                         // Clean first (strip prep/state descriptors), then filter using instruction keywords
                         var cleanName = nameString.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -537,8 +555,8 @@ class LLMService: ObservableObject {
                         // Parse unit (attach parenthetical size if present between amount and unit)
                         var unit: String
                         if unitRange.location != NSNotFound,
-                           let unitRangeSwift = Range(unitRange, in: trimmedLine) {
-                            let unitRaw = String(trimmedLine[unitRangeSwift])
+                           let unitRangeSwift = Range(unitRange, in: normalizedLine) {
+                            let unitRaw = String(normalizedLine[unitRangeSwift])
                             // Guard against false-positive single-letter units (g/l) leaking from words like garlic/large
                             if unitRaw.count == 1 {
                                 let nextIndex = unitRangeSwift.upperBound
@@ -550,8 +568,8 @@ class LLMService: ObservableObject {
                             }
                             unit = standardizeUnit(unitRaw)
                             // Look back between amount and unit for a parenthetical size and include it in the unit
-                            if let amountR = Range(amountRange, in: trimmedLine) {
-                                let between = trimmedLine[amountR.upperBound..<unitRangeSwift.lowerBound]
+                            if let amountR = Range(amountRange, in: normalizedLine) {
+                                let between = normalizedLine[amountR.upperBound..<unitRangeSwift.lowerBound]
                                 if let sizeMatch = between.range(of: #"\(([^)]*?)\)"#, options: .regularExpression) {
                                     let sizeText = String(between[sizeMatch]).trimmingCharacters(in: CharacterSet(charactersIn: "() "))
                                     if !sizeText.isEmpty {
