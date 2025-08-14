@@ -77,8 +77,13 @@ class DataManager: ObservableObject {
                 "ice water", "cold water", "warm water", "hot water", "lukewarm water"
             ]
             if excludedItems.contains(lowercasedName) { return false }
-            // Also exclude simple water patterns like "4 quarts water" once name is normalized to end with "water"
+            // Exclude generic water phrases or names that end with "water" with no leading flavor (e.g., "4 quarts water")
             if lowercasedName.range(of: #"^(?:ice|cold|warm|hot|lukewarm)?\s*water$"#, options: .regularExpression) != nil { return false }
+            if lowercasedName.hasSuffix(" water") {
+                // Allow flavored waters like "rose water" or "orange blossom water"
+                let allowedFlavored = ["rose water", "orange blossom water", "floral water", "coconut water"]
+                if !allowedFlavored.contains(lowercasedName) { return false }
+            }
             return true
         }
         
@@ -127,7 +132,12 @@ class DataManager: ObservableObject {
                 "ice water", "cold water", "warm water", "hot water", "lukewarm water"
             ]
             if excludedItems.contains(lowercasedName) { return false }
+            // Exclude generic water phrases or names that end with "water" with no leading flavor (e.g., "4 quarts water")
             if lowercasedName.range(of: #"^(?:ice|cold|warm|hot|lukewarm)?\s*water$"#, options: .regularExpression) != nil { return false }
+            if lowercasedName.hasSuffix(" water") {
+                let allowedFlavored = ["rose water", "orange blossom water", "floral water", "coconut water"]
+                if !allowedFlavored.contains(lowercasedName) { return false }
+            }
             return true
         }
         

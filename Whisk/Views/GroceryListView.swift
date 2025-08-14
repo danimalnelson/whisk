@@ -179,8 +179,17 @@ private extension GroceryListDetailView {
         var lines: [String] = ["Ingredients"]
         for ing in list.ingredients {
             let amountPart: String = ing.amount > 0 ? String(format: ing.amount.truncatingRemainder(dividingBy: 1) == 0 ? "%.0f" : "%.2f", ing.amount) : ""
-            let unitPart: String = ing.unit.isEmpty ? "" : " \(ing.unit)"
-            let amt = amountPart.isEmpty && unitPart.isEmpty ? "" : " \(amountPart)\(unitPart)"
+            let unitPart: String = ing.unit.isEmpty ? "" : "\(ing.unit)"
+            let amt: String
+            if amountPart.isEmpty && unitPart.isEmpty {
+                amt = ""
+            } else if amountPart.isEmpty { // unit only
+                amt = " \(unitPart)"
+            } else if unitPart.isEmpty { // amount only
+                amt = " \(amountPart)"
+            } else { // amount + unit
+                amt = " \(amountPart) \(unitPart)"
+            }
             lines.append("- \(ing.name.capitalized)\(amt)")
         }
         return lines.joined(separator: "\n")
@@ -297,6 +306,10 @@ struct IngredientRow: View {
         // Handle singular vs plural forms
         let finalUnit = formatUnitForAmount(unit: spelledOutUnit, amount: amount)
         
+        // If amount is empty, return only unit (no leading space)
+        if combinedAmount.isEmpty {
+            return finalUnit
+        }
         return "\(combinedAmount) \(finalUnit)"
     }
     
@@ -307,6 +320,9 @@ struct IngredientRow: View {
         if nonMeasurableWords.contains(lowercasedUnit) {
             return ""
         }
+        
+        // Preserve preferred casing for special display units
+        if lowercasedUnit == "to taste" { return "To taste" }
         
         // Return the display mapping or the original unit
         return unitDisplayMappings[lowercasedUnit] ?? lowercasedUnit
