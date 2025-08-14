@@ -1170,32 +1170,6 @@ class LLMService: ObservableObject {
                 }
             }
 
-            // Final fallback: parse compound "X, Y, and Z, for serving" lines into multiple name-only items
-            if !handled {
-                let lower = trimmedLine.lowercased()
-                if lower.contains("for serving") || lower.contains("for garnish") {
-                    var lhs = trimmedLine
-                    if let m = try? NSRegularExpression(pattern: #"(?i)\s*,\s*for\s+(serving|garnish).*?$"#).firstMatch(in: trimmedLine, options: [], range: NSRange(trimmedLine.startIndex..., in: trimmedLine)),
-                       let r = Range(m.range(at: 0), in: trimmedLine) {
-                        lhs = String(trimmedLine[..<r.lowerBound])
-                    }
-                    // split by commas and 'and'
-                    var parts = lhs.replacingOccurrences(of: #"\s+and\s+"#, with: ", ", options: .regularExpression)
-                        .split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                    parts = parts.filter { !$0.isEmpty }
-                    if parts.count >= 2 {
-                        for p in parts {
-                            let nameOnly = cleanIngredientName(p)
-                            if nameOnly.isEmpty { continue }
-                            let ingredient = Ingredient(name: nameOnly, amount: 0.0, unit: "For serving", category: determineCategory(nameOnly))
-                            ingredients.append(ingredient)
-                            print("📋 Regex parsed (compound serving): \(nameOnly) - 0 For serving")
-                        }
-                        handled = true
-                    }
-                }
-            }
-
             // Clean up extra whitespace
             cleanName = cleanName.trimmingCharacters(in: .whitespacesAndNewlines)
 
