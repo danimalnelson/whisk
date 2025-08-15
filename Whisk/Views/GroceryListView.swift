@@ -1,5 +1,43 @@
 import SwiftUI
 
+// Title-case helper for ingredient names that keeps small words like "and"/"or" lowercased (except at start)
+private let lowercaseSmallWords: Set<String> = ["and", "or", "of", "with", "in", "on", "for", "to", "from"]
+
+private func titleCaseIngredientName(_ name: String) -> String {
+    // Preserve spacing between words
+    let parts = name.split(separator: " ", omittingEmptySubsequences: false)
+    guard !parts.isEmpty else { return name }
+
+    func capitalizeWord(_ word: String) -> String {
+        // Handle hyphenated tokens by capitalizing each segment
+        if word.contains("-") {
+            return word.split(separator: "-").map { segment in
+                let s = String(segment)
+                guard let first = s.first else { return s }
+                return String(first).uppercased() + s.dropFirst().lowercased()
+            }.joined(separator: "-")
+        }
+        guard let first = word.first else { return word }
+        return String(first).uppercased() + word.dropFirst().lowercased()
+    }
+
+    var rebuilt: [String] = []
+    for (index, p) in parts.enumerated() {
+        let token = String(p)
+        if token.isEmpty {
+            rebuilt.append(token)
+            continue
+        }
+        // Keep small words lowercased when not at the beginning
+        if index > 0 && lowercaseSmallWords.contains(token.lowercased()) {
+            rebuilt.append(token.lowercased())
+        } else {
+            rebuilt.append(capitalizeWord(token))
+        }
+    }
+    return rebuilt.joined(separator: " ")
+}
+
 // MARK: - Ingredient Image Helpers
 private func ingredientImageURL(for name: String) -> URL? {
     IngredientImageService.shared.url(for: name)
@@ -207,7 +245,7 @@ private extension GroceryListDetailView {
             } else { // amount + unit
                 amt = " \(amountPart) \(unitPart)"
             }
-            lines.append("- \(ing.name.capitalized)\(amt)")
+            lines.append("- \(titleCaseIngredientName(ing.name))\(amt)")
         }
         return lines.joined(separator: "\n")
     }
@@ -367,7 +405,7 @@ struct IngredientRow: View {
     }
     
     private func formatIngredientName(_ name: String, amount: Double) -> String {
-        var formattedName = name.capitalized
+        var formattedName = titleCaseIngredientName(name)
         
         // Handle special cases for ingredient names
         let specialCases: [String: String] = [
@@ -380,7 +418,7 @@ struct IngredientRow: View {
         
         let lowercasedName = name.lowercased()
         if let specialCase = specialCases[lowercasedName] {
-            formattedName = specialCase.capitalized
+            formattedName = titleCaseIngredientName(specialCase)
         }
         
         // Handle pluralization for individual items
