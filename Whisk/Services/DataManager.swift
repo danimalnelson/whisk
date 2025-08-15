@@ -61,7 +61,7 @@ class DataManager: ObservableObject {
     func addIngredientsToCurrentList(_ ingredients: [Ingredient]) {
         // Create a default list if none exists
         if currentList == nil {
-            createNewList(name: "Ingredients")
+            _ = createNewList(name: "Ingredients")
         }
         
         guard var list = currentList else { 
@@ -368,7 +368,7 @@ class DataManager: ObservableObject {
                     // If not found, use the first list or create a default one
                     if groceryLists.isEmpty {
                         print("📱 No lists found, creating default list")
-                        createNewList(name: "Ingredients")
+                        _ = createNewList(name: "Ingredients")
                     } else {
                         currentList = groceryLists.first
                         print("📱 Using first list as current: \(currentList?.name ?? "nil")")
@@ -378,7 +378,7 @@ class DataManager: ObservableObject {
                 print("❌ Error loading current list: \(error)")
                 if groceryLists.isEmpty {
                     print("📱 Creating default list after error")
-                    createNewList(name: "Ingredients")
+                    _ = createNewList(name: "Ingredients")
                 } else {
                     currentList = groceryLists.first
                 }
@@ -387,7 +387,7 @@ class DataManager: ObservableObject {
             print("📱 No saved current list found")
             if groceryLists.isEmpty {
                 print("📱 Creating default list")
-                createNewList(name: "Ingredients")
+                _ = createNewList(name: "Ingredients")
             } else {
                 currentList = groceryLists.first
                 print("📱 Using first list as current: \(currentList?.name ?? "nil")")

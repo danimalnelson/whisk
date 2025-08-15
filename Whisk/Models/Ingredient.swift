@@ -1,7 +1,7 @@
 import Foundation
 
 struct Ingredient: Identifiable, Codable, Hashable {
-    let id = UUID()
+    var id = UUID()
     var name: String
     var amount: Double
     var unit: String

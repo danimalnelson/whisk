@@ -265,6 +265,23 @@ function parseLLMResponse(response, originalURL) {
     if (!rawName || typeof rawName !== 'string') return rawName;
     let name = rawName;
 
+    // Decode HTML entities and curly quotes early
+    name = name
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&rsquo;/g, "'")
+      .replace(/&lsquo;/g, "'");
+
+    // Canonicalize leading-apostrophe proper nouns
+    const nameTrim = name.trim().replace(/’/g, "'");
+    if (/^'?\s*nduja\b/i.test(nameTrim)) {
+      return "'Nduja";
+    }
+
     // Remove parenthetical descriptors that contain prep terms
     name = name.replace(/\((?:(?!\)).)*(?:chopped|sliced|diced|minced|grated|shredded|julienned|zested|torn|cubed|mashed|pureed|whipped|beaten|crushed)[^)]*\)/gi, '');
 

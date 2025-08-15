@@ -8,17 +8,27 @@ private func titleCaseIngredientName(_ name: String) -> String {
     let parts = name.split(separator: " ", omittingEmptySubsequences: false)
     guard !parts.isEmpty else { return name }
 
+    func capSegment(_ s: String) -> String {
+        guard let first = s.first else { return s }
+        // Special case: leading apostrophe should not force lowercasing the next letter
+        if first == "'" || first == "’" {
+            let after = s.index(after: s.startIndex)
+            guard after < s.endIndex else { return String(first) }
+            let second = String(s[after]).uppercased()
+            let rest = s.index(after, offsetBy: 1, limitedBy: s.endIndex).map { String(s[$0...]).lowercased() } ?? ""
+            return String(first) + second + rest
+        }
+        return String(first).uppercased() + s.dropFirst().lowercased()
+    }
+
     func capitalizeWord(_ word: String) -> String {
         // Handle hyphenated tokens by capitalizing each segment
         if word.contains("-") {
             return word.split(separator: "-").map { segment in
-                let s = String(segment)
-                guard let first = s.first else { return s }
-                return String(first).uppercased() + s.dropFirst().lowercased()
+                capSegment(String(segment))
             }.joined(separator: "-")
         }
-        guard let first = word.first else { return word }
-        return String(first).uppercased() + word.dropFirst().lowercased()
+        return capSegment(word)
     }
 
     var rebuilt: [String] = []
