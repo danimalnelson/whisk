@@ -2,6 +2,17 @@ import Foundation
 
 class LLMService: ObservableObject {
     private let baseURL = "https://whisk-server-git-new-recipe-adder-dannelson.vercel.app/api/call-openai"
+    // Basic allow/deny lists to quickly gate obvious non-recipe domains
+    private let recipeDomainAllowList: Set<String> = [
+        "allrecipes.com", "bonappetit.com", "seriouseats.com", "foodnetwork.com",
+        "epicurious.com", "foodandwine.com", "thekitchn.com", "bbcgoodfood.com",
+        "cooking.nytimes.com", "simplyrecipes.com", "smittenkitchen.com",
+        "delish.com", "loveandlemons.com", "taste.com.au", "nytimes.com"
+    ]
+    private let nonRecipeDomainDenyList: Set<String> = [
+        "espn.com", "cnn.com", "bbc.com", "bloomberg.com",
+        "wsj.com", "foxnews.com", "theverge.com", "techcrunch.com"
+    ]
     
     // 🚀 NEW: Simple in-memory cache for parsed recipes
     private var recipeCache: [String: RecipeParsingResult] = [:]
@@ -84,6 +95,17 @@ class LLMService: ObservableObject {
         
         // Fetch and process webpage
         let webpageContent = try await fetchWebpageContent(from: url)
+
+        // 🛡️ Gate: skip non-recipe pages early
+        if !isLikelyRecipePage(urlString: url, html: webpageContent) {
+            print("🚫 Skipping non-recipe URL: \(url)")
+            let result = RecipeParsingResult(recipe: Recipe(url: url), success: false, error: "This URL doesn't look like a recipe page.")
+            let totalTime = CFAbsoluteTimeGetCurrent() - totalStartTime
+            print("⏱️ Total time (non-recipe): \(String(format: "%.2f", totalTime))s")
+            print("⏱️ === Recipe Parsing End ===")
+            performanceStats.printStats()
+            return result
+        }
         
         // 🚀 NEW: Try structured data extraction first (fastest path)
         if let structuredData = extractStructuredData(from: webpageContent),
@@ -172,6 +194,10 @@ class LLMService: ObservableObject {
             .filter { line in
                 guard !line.isEmpty else { return false }
                 let lower = line.lowercased()
+                // HTML/DOM tokens should never be considered ingredients
+                if lower.range(of: #"[<>]"#, options: .regularExpression) != nil { return false }
+                if lower.range(of: #"</?\w+[\s>]|href=|src=|<script|</script|<style|</style|<!doctype|<meta|<link"#, options: .regularExpression) != nil { return false }
+                if lower.contains("http://") || lower.contains("https://") || lower.contains("www.") { return false }
                 // Avoid CSS/JS/noise lines for quick parsing
                 let cssJsNoise = ["display:", "position:", "width:", "height:", "margin:", "padding:", "background:", "color:", "font:", "@media", "function", "var(", "document.", "window.", "onetrust", "data-"]
                 if cssJsNoise.contains(where: { lower.contains($0) }) { return false }
@@ -329,6 +355,16 @@ class LLMService: ObservableObject {
         performanceStats.printStats()
         
         return result
+    }
+
+    // Lightweight URL validation to determine if a page is likely a recipe before parsing
+    func validateIsLikelyRecipe(url: String) async -> Bool {
+        do {
+            let html = try await fetchWebpageContent(from: url)
+            return isLikelyRecipePage(urlString: url, html: html)
+        } catch {
+            return false
+        }
     }
     
     // 🚀 NEW: Cache management methods
@@ -2951,9 +2987,7 @@ class LLMService: ObservableObject {
         cleanedName = cleanedName.replacingOccurrences(of: #"\s*(?:,|;|:|\-|–)\s*$"#, with: "", options: .regularExpression)
 
         // 7.2) Remove stray leading single-letter leftovers like 's ' that can leak (e.g., 's dill', 's diced strawberries')
-        // First, join a leading single letter + space + word (fixes 'p epper' → 'pepper').
-        cleanedName = cleanedName.replacingOccurrences(of: #"(?i)^\s*([a-z])\s+([a-z]{2,})"#, with: "$1$2", options: .regularExpression)
-        // Then remove stray possessive-like single-letter remnants if any remain.
+        // Drop any solitary leading single-letter token rather than merging it with the next word.
         cleanedName = cleanedName.replacingOccurrences(of: #"(?i)^\s*[a-z]\s+"#, with: "", options: .regularExpression)
 
         // Fallback: remove single preparation words only at the very start or end (but preserve important descriptors)
@@ -3045,9 +3079,22 @@ class LLMService: ObservableObject {
     }
     
     private func extractIngredientSection(from content: String) -> String {
-        // Simple approach: Let the LLM handle the filtering
-        // Just return the content and let the LLM figure out what's food vs code
-        return content
+        // Strip obvious HTML, CSS, JS blocks to reduce leakage before any parsing
+        var text = content
+        // Remove script and style blocks entirely
+        text = text.replacingOccurrences(of: #"(?is)<script[^>]*>[\s\S]*?</script>"#, with: "\n", options: .regularExpression)
+        text = text.replacingOccurrences(of: #"(?is)<style[^>]*>[\s\S]*?</style>"#, with: "\n", options: .regularExpression)
+        // Remove head and noscript blocks
+        text = text.replacingOccurrences(of: #"(?is)<head[^>]*>[\s\S]*?</head>"#, with: "\n", options: .regularExpression)
+        text = text.replacingOccurrences(of: #"(?is)<noscript[^>]*>[\s\S]*?</noscript>"#, with: "\n", options: .regularExpression)
+        // Remove common meta/link tags
+        text = text.replacingOccurrences(of: #"(?is)<meta[^>]*>"#, with: "\n", options: .regularExpression)
+        text = text.replacingOccurrences(of: #"(?is)<link[^>]*>"#, with: "\n", options: .regularExpression)
+        // Strip remaining tags to plain text skeleton
+        text = text.replacingOccurrences(of: #"(?is)<[^>]+>"#, with: "\n", options: .regularExpression)
+        // Collapse excessive whitespace
+        text = text.replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression)
+        return text
     }
     
     // MARK: - Semantic Recipe Extraction Methods
@@ -3122,6 +3169,45 @@ class LLMService: ObservableObject {
         }
         
         return nil
+    }
+
+    // MARK: - Non-recipe page detection
+    private func isLikelyRecipePage(urlString: String, html: String) -> Bool {
+        // 1) Domain heuristics
+        if let host = URL(string: urlString)?.host?.lowercased() {
+            let bare = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+            if nonRecipeDomainDenyList.contains(bare) {
+                return false
+            }
+            // Allow list is advisory; do not strictly require it
+        }
+
+        let lower = html.lowercased()
+        // 2) Look for strong recipe markers
+        let hasRecipeSchema = (lower.range(of: #""@type"\s*:\s*"recipe""#, options: .regularExpression) != nil)
+            || lower.contains("itemtype=\"http://schema.org/recipe\"")
+        let hasIngredientMarkers = lower.contains(">ingredients<") || lower.contains("ingredients:") || lower.contains("ingredient list")
+        let hasInstructionMarkers = lower.contains(">instructions<") || lower.contains("directions:") || lower.contains("method:")
+        let hasCookMeta = lower.contains("prep time") || lower.contains("cook time") || lower.contains("total time") || lower.contains("servings")
+
+        let strongSignals = hasRecipeSchema || (hasIngredientMarkers && hasInstructionMarkers) || (hasIngredientMarkers && hasCookMeta)
+        if strongSignals { return true }
+
+        // 3) Weak heuristic: presence of multiple list items near an ingredient heading
+        if let rx = try? NSRegularExpression(pattern: "(?is)ingredients.{0,1200}(<li[^>]*>.*?</li>){3,}") {
+            if rx.firstMatch(in: html, options: [], range: NSRange(html.startIndex..., in: html)) != nil {
+                return true
+            }
+        }
+
+        // 4) Negative signals: news/sports/video heavy pages
+        let negativeTokens = ["scoreboard", "subscribe", "live updates", "highlights", "analysis", "breaking news", "video player"]
+        if negativeTokens.contains(where: { lower.contains($0) }) {
+            return false
+        }
+
+        // Default: unsure → treat as non-recipe to avoid leakage
+        return false
     }
     
     private func extractStructuredIngredients(from content: String) -> String? {

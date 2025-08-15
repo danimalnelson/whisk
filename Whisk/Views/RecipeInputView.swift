@@ -88,7 +88,7 @@ struct RecipeInputView: View {
                     .foregroundColor(.black)
                     .cornerRadius(10)
                 }
-                .disabled(recipeEntries.isEmpty || isParsing)
+                .disabled(recipeEntries.isEmpty || isParsing || recipeEntries.contains(where: { $0.error != nil }))
                 .padding(.horizontal)
             }
             .navigationTitle("Add recipes")
@@ -116,13 +116,32 @@ struct RecipeInputView: View {
     }
     
     private func addURL() {
-        let trimmedURL = newURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedURL.isEmpty else { return }
-        guard !recipeEntries.contains(where: { $0.url == trimmedURL }) else { newURL = ""; return }
-        let placeholder = RecipeEntry(url: trimmedURL)
+        let trimmed = newURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        // Normalize: if missing scheme but looks like a domain, assume https
+        var candidate = trimmed
+        if URL(string: candidate)?.scheme == nil {
+            if (candidate.hasPrefix("www.") || (candidate.contains(".") && !candidate.contains(" "))) {
+                candidate = "https://" + candidate
+            }
+        }
+        guard !recipeEntries.contains(where: { $0.url == candidate }) else { newURL = ""; return }
+        var placeholder = RecipeEntry(url: candidate)
         recipeEntries.append(placeholder)
         newURL = ""
-        Task { await enrichEntry(for: trimmedURL) }
+        // Pre-validate if this looks like a recipe to give fast feedback
+        Task {
+            let looksRecipe = await llmService.validateIsLikelyRecipe(url: candidate)
+            await MainActor.run {
+                if let idx = recipeEntries.firstIndex(where: { $0.url == candidate }) {
+                    if !looksRecipe {
+                        placeholder.error = "This URL doesn't look like a recipe page. Remove it to continue."
+                        recipeEntries[idx] = placeholder
+                    }
+                }
+            }
+            await enrichEntry(for: candidate)
+        }
     }
     
     private func parseRecipes() {
@@ -185,6 +204,12 @@ struct RecipeInputView: View {
                             }
                         } else {
                             print("❌ Failed to parse recipe: \(result.error ?? "Unknown error")")
+                            // mark the entry with an error for inline display
+                            if let idx = recipeEntries.firstIndex(where: { $0.url == result.recipe.url }) {
+                                var e = recipeEntries[idx]
+                                e.error = result.error ?? "This URL doesn't look like a recipe page."
+                                recipeEntries[idx] = e
+                            }
                         }
                     }
                 }
@@ -270,6 +295,7 @@ private struct RecipeEntry: Identifiable, Hashable {
     var title: String? = nil
     var siteName: String? = nil
     var faviconURL: URL? = nil
+    var error: String? = nil
 }
 
 private struct RecipeRowView: View {
@@ -307,9 +333,16 @@ private struct RecipeRowView: View {
                 Text((entry.title ?? formattedURLTitle(entry.url)).isEmpty ? formattedURLTitle(entry.url) : (entry.title ?? "")).lineLimit(2)
                     .font(.system(size: 16, weight: .regular))
                     .foregroundColor(.primary)
-                Text(entry.siteName ?? RecipeRowView.friendlySiteName(from: entry.url))
-                    .font(.system(size: 14, weight: .regular))
-                    .foregroundColor(.secondary)
+                if let error = entry.error {
+                    Text(error)
+                        .font(.system(size: 13, weight: .regular))
+                        .foregroundColor(.red)
+                        .lineLimit(2)
+                } else {
+                    Text(entry.siteName ?? RecipeRowView.friendlySiteName(from: entry.url))
+                        .font(.system(size: 14, weight: .regular))
+                        .foregroundColor(.secondary)
+                }
             }
             Spacer()
         }
