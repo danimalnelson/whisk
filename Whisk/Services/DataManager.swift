@@ -220,50 +220,32 @@ class DataManager: ObservableObject {
     // MARK: - Ingredient Consolidation
     
     private func findConsolidatableIngredient(_ newIngredient: Ingredient, in existingIngredients: [Ingredient]) -> Int? {
-        let lowercasedNewName = newIngredient.name.lowercased()
-        
+        // Strict consolidation policy:
+        // - Exact name match (case-insensitive)
+        // - Same category
+        // - Same unit (case-insensitive)
+        // - Same package size (amount equality within small epsilon)
+        let newName = newIngredient.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let newUnit = newIngredient.unit.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let newAmount = newIngredient.amount
+        let epsilon = 1e-6
+
         for (index, existing) in existingIngredients.enumerated() {
-            let lowercasedExistingName = existing.name.lowercased()
-            
-            // Exact name match (highest priority)
-            if lowercasedNewName == lowercasedExistingName && newIngredient.category == existing.category {
-                return index
-            }
-            
-            // Similar name match (e.g., "tomato" vs "tomatoes")
-            if areSimilarIngredients(lowercasedNewName, lowercasedExistingName) && newIngredient.category == existing.category {
+            let existingName = existing.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let existingUnit = existing.unit.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if existingName == newName,
+               existing.category == newIngredient.category,
+               existingUnit == newUnit,
+               abs(existing.amount - newAmount) < epsilon {
                 return index
             }
         }
-        
         return nil
     }
     
     private func areSimilarIngredients(_ name1: String, _ name2: String) -> Bool {
-        // Handle plural/singular variations
-        let singular1 = name1.replacingOccurrences(of: "s$", with: "", options: .regularExpression)
-        let singular2 = name2.replacingOccurrences(of: "s$", with: "", options: .regularExpression)
-        
-        if singular1 == singular2 {
-            return true
-        }
-        
-        // Handle common variations
-        let variations: [String: Set<String>] = [
-            "tomato": ["tomatoes", "tomato"],
-            "onion": ["onions", "onion"],
-            "garlic": ["garlic", "garlic clove", "garlic cloves"],
-            "bell pepper": ["bell peppers", "pepper", "peppers"],
-            "potato": ["potatoes", "potato"],
-            "carrot": ["carrots", "carrot"]
-        ]
-        
-        for (base, variants) in variations {
-            if variants.contains(name1) && variants.contains(name2) {
-                return true
-            }
-        }
-        
+        // Similarity-based consolidation is disabled under the strict policy.
+        // Keep items separate unless they match exactly (name/category/unit/amount).
         return false
     }
     
