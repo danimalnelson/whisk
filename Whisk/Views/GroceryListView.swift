@@ -11,10 +11,27 @@ struct GroceryListView: View {
     var body: some View {
         // Launch directly into the single list detail view within a navigation stack for a visible title
         NavigationStack {
-            GroceryListDetailView(
-                dataManager: dataManager,
-                list: dataManager.currentList ?? dataManager.createNewList(name: "Ingredients")
-            )
+            Group {
+                if let current = dataManager.currentList {
+                    GroceryListDetailView(
+                        dataManager: dataManager,
+                        list: current
+                    )
+                } else {
+                    // Avoid creating/saving a new empty list during body evaluation.
+                    // Ensure default list once on appear instead.
+                    VStack(spacing: 16) {
+                        ProgressView()
+                        Text("Preparing list…")
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background()
+                    .onAppear {
+                        _ = dataManager.createNewList(name: "Ingredients")
+                    }
+                }
+            }
         }
     }
 }
