@@ -289,7 +289,7 @@ struct IngredientRow: View {
     // Non-measurable words that should not be displayed as units
     private let nonMeasurableWords: Set<String> = [
         "piece", "pieces", "count", "individual", "item", "items",
-        "stalk", "stalks", "leaf", "leaves",
+        "stalk", "stalks",
         "medium", "large", "small", "extra large", "xl",
         "raw", "thin", "thick", "fresh", "frozen", "dried",
         "ripe", "unripe", "organic", "whole", "sliced", "diced",

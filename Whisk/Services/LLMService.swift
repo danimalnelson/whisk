@@ -522,7 +522,9 @@ class LLMService: ObservableObject {
             "stir", "mix", "blend", "whisk",
             "until", "until just", "until lightly", "until golden", "until tender", "until cooked",
             "over medium", "over high", "over low", "in a", "in the", "on a", "on the",
-            "carefully", "gently", "slowly", "quickly", "immediately", "transfer", "serve"
+            "carefully", "gently", "slowly", "quickly", "immediately", "transfer", "serve",
+            // treat pure adverb-only fragments as non-ingredients
+            "very thinly", "thinly", "finely", "roughly", "coarsely"
         ]
         
         for line in lines {
@@ -548,6 +550,38 @@ class LLMService: ObservableObject {
             if trimmedLine.isEmpty { continue }
             
             var handled = false
+
+            // Herb count pattern: e.g., "10 fresh large mint leaves, very thinly sliced"
+            do {
+                let herbAlt = #"(?:basil|mint|parsley|cilantro|coriander|tarragon|dill|thyme|rosemary|sage|oregano|chives)"#
+                // Variant A: amount first
+                let patternA = #"(?i)^\s*(one|two|three|four|five|six|seven|eight|nine|ten|a|an|\d+[\d\/\s\.]*)\s+(?:fresh(?:ly)?\s+)?(?:small|medium|large|extra\s*large|xl\s+)?\b(\#(herbAlt))\b(?:\s+leaves?|\s+sprigs?)?(?:\s*,[\s\S]*)?$"#
+                // Variant B: 'fresh' before amount (e.g., "fresh 10 large mint leaves")
+                let patternB = #"(?i)^\s*(?:fresh(?:ly)?\s+)(one|two|three|four|five|six|seven|eight|nine|ten|a|an|\d+[\d\/\s\.]*)\s+(?:small|medium|large|extra\s*large|xl\s+)?\b(\#(herbAlt))\b(?:\s+leaves?|\s+sprigs?)?(?:\s*,[\s\S]*)?$"#
+                for pattern in [patternA, patternB] {
+                    guard let rx = try? NSRegularExpression(pattern: pattern) else { continue }
+                    let r = NSRange(trimmedLine.startIndex..., in: trimmedLine)
+                    if let m = rx.firstMatch(in: trimmedLine, options: [], range: r), m.numberOfRanges >= 3,
+                       let amountR = Range(m.range(at: 1), in: trimmedLine),
+                       let herbR = Range(m.range(at: 2), in: trimmedLine) {
+                        let amountString = String(trimmedLine[amountR])
+                        let herb = String(trimmedLine[herbR]).lowercased()
+                        let amount = parseAmount(amountString)
+                        if amount > 0 {
+                            // If the text explicitly says "sprigs", prefer sprigs; otherwise default to leaves
+                            let unit: String
+                            if trimmedLine.range(of: #"(?i)\bsprigs?\b"#, options: .regularExpression) != nil { unit = "sprigs" }
+                            else { unit = "leaves" }
+                            let ing = Ingredient(name: herb, amount: amount, unit: unit, category: .produce)
+                            ingredients.append(ing)
+                            print("📋 Regex parsed (herb-count): \(herb) - \(amount) \(unit) (Produce)")
+                            handled = true
+                            break
+                        }
+                    }
+                }
+            }
+            if handled { continue }
             // Try measurement-based first; if no match, try count-based
             let matches = regex.matches(in: normalizedLine, options: [], range: NSRange(normalizedLine.startIndex..., in: normalizedLine))
             
@@ -563,7 +597,21 @@ class LLMService: ObservableObject {
                         // Clean first (strip prep/state descriptors), then filter using instruction keywords
                         var cleanName = nameString.trimmingCharacters(in: .whitespacesAndNewlines)
                         cleanName = cleanIngredientName(cleanName)
-                        let lowercasedName = cleanName.lowercased()
+                        var lowercasedName = cleanName.lowercased()
+
+                        // Herb salvage: if the cleaned name became non-ingredient (e.g., adverb-only), but the raw line contains a known herb,
+                        // restore herb name and prefer leaves/sprigs as unit
+                        do {
+                            let herbAlt = ["basil","mint","parsley","cilantro","coriander","tarragon","dill","thyme","rosemary","sage","oregano","chives"]
+                            let rawLower = trimmedLine.lowercased()
+                            let adverbNoise: Set<String> = ["very thinly","thinly","finely","roughly","coarsely"]
+                            if adverbNoise.contains(lowercasedName) || lowercasedName.isEmpty {
+                                if let herb = herbAlt.first(where: { rawLower.contains($0) }) {
+                                    cleanName = herb
+                                    lowercasedName = herb
+                                }
+                            }
+                        }
                         
                         // Skip if it contains non-ingredient keywords
                         var isNonIngredient = false
@@ -634,6 +682,19 @@ class LLMService: ObservableObject {
                             }
                         } else {
                             unit = "piece"
+                        }
+
+                        // If we salvaged an herb, normalize unit to leaves/sprigs when appropriate
+                        do {
+                            let rawLower = trimmedLine.lowercased()
+                            let isHerb = ["basil","mint","parsley","cilantro","coriander","tarragon","dill","thyme","rosemary","sage","oregano","chives"].contains(where: { cleanName.lowercased() == $0 })
+                            if isHerb {
+                                if rawLower.range(of: #"(?i)\bsprigs?\b"#, options: .regularExpression) != nil {
+                                    unit = "sprigs"
+                                } else {
+                                    unit = "leaves"
+                                }
+                            }
                         }
                         
                         // Prefer weight in grams for salt only (canonicalize amount)
@@ -712,6 +773,11 @@ class LLMService: ObservableObject {
                             #"(?i)\bsliced\b"#,
                             #"(?i)\bthinly\s+sliced\b"#,
                             #"(?i)\bfinely\s+sliced\b"#,
+                            #"(?i)\bvery\s+thinly\b"#,
+                            #"(?i)\bthinly\b"#,
+                            #"(?i)\bfinely\b"#,
+                            #"(?i)\broughly\b"#,
+                            #"(?i)\bcoarsely\b"#,
                             #"(?i)\broughly\s+sliced\b"#,
                             #"(?i)\btorn\s+into\s+(?:small\s+)?bite[-\s]?size(?:d)?\s+pieces\b"#,
                             #"(?i)\btorn\s+into\s+small\s+pieces\b"#,
@@ -816,7 +882,19 @@ class LLMService: ObservableObject {
                        let nameString = Range(nameRange, in: trimmedLine).map({ String(trimmedLine[$0]) }) {
                         var cleanName = nameString.trimmingCharacters(in: .whitespacesAndNewlines)
                         cleanName = cleanIngredientName(cleanName)
-                        let lowercasedName = cleanName.lowercased()
+                        var lowercasedName = cleanName.lowercased()
+                        // Herb salvage for count-based lines: if name collapses to adverb-only, but raw contains herb, restore herb
+                        do {
+                            let adverbNoise: Set<String> = ["very thinly","thinly","finely","roughly","coarsely"]
+                            if adverbNoise.contains(lowercasedName) || lowercasedName.isEmpty {
+                                let herbAlt = ["basil","mint","parsley","cilantro","coriander","tarragon","dill","thyme","rosemary","sage","oregano","chives"]
+                                let rawLower = trimmedLine.lowercased()
+                                if let herb = herbAlt.first(where: { rawLower.contains($0) }) {
+                                    cleanName = herb
+                                    lowercasedName = herb
+                                }
+                            }
+                        }
                         var isNonIngredient = false
                         for keyword in nonIngredientKeywords {
                             if lowercasedName.contains(keyword.lowercased()) { isNonIngredient = true; break }
@@ -856,6 +934,17 @@ class LLMService: ObservableObject {
                                     unit = "\(size) \(pieceWord)"
                                 } else {
                                     unit = pieceWord
+                                }
+                            }
+                            // If this is a known herb, normalize unit to leaves/sprigs when present or default to leaves
+                            do {
+                                let herbAlt = ["basil","mint","parsley","cilantro","coriander","tarragon","dill","thyme","rosemary","sage","oregano","chives"]
+                                if herbAlt.contains(cleanIngredientName.lowercased()) {
+                                    if trimmedLine.range(of: #"(?i)\bsprigs?\b"#, options: .regularExpression) != nil {
+                                        unit = "sprigs"
+                                    } else {
+                                        unit = "leaves"
+                                    }
                                 }
                             }
                             // Append size descriptor as parenthetical if present in the raw text (but not for salt/pepper)
@@ -1032,6 +1121,9 @@ class LLMService: ObservableObject {
                     for keyword in nonIngredientKeywords {
                         if lower.contains(keyword.lowercased()) { isInstruction = true; break }
                     }
+                    // Exclude pure prep/adverb fragments like "very thinly", "thinly", etc.
+                    let adverbNoise: Set<String> = ["very thinly", "thinly", "finely", "roughly", "coarsely"]
+                    if adverbNoise.contains(lower) { isInstruction = true }
                     // Extra guard: reject CSS/JS/noise tokens to avoid entries like "var", "rgba", color codes, degrees, etc.
                     let noiseTokens: [String] = [
                         "rgba", "rgb", "var(", "deg", "onetrust", "cookie", "font", "color", "background",
@@ -1210,7 +1302,9 @@ class LLMService: ObservableObject {
     }
     
     // 🚀 NEW: Parse ingredient from string (for structured data)
+    // TEMP DEBUG removed
     func parseIngredientFromString(_ ingredientString: String) -> Ingredient? {
+        // TEMP DEBUG removed
         var cleanString = ingredientString.trimmingCharacters(in: .whitespacesAndNewlines)
         var isCannedOrJarredItem: Bool = false
 		// Normalize unicode vulgar fractions to ASCII equivalents; also separate attached forms like "1½" → "1 1/2"
@@ -1241,11 +1335,57 @@ class LLMService: ObservableObject {
         // Remove leading numeric list enumerators like "1 Thinly sliced fresh chives" only when the token
         // after the number is a preparation descriptor (not regular produce like "1 red pepper")
         do {
-            let hasUnitToken = cleanString.range(of: #"(?i)\b(cup|cups|tablespoon|tablespoons|teaspoon|teaspoons|ounce|ounces|pound|pounds|gram|grams|g|kg|ml|l|clove|cloves|piece|pieces|package|packages|jar|jars|bottle|bottles|bag|bags|bunch|bunches|head|heads|slice|slices)\b"#, options: .regularExpression) != nil
+            let hasUnitToken = cleanString.range(of: #"(?i)\b(cup|cups|tablespoon|tablespoons|teaspoon|teaspoons|ounce|ounces|pound|pounds|gram|grams|g|kg|ml|l|clove|cloves|leaf|leaves|sprig|sprigs|piece|pieces|package|packages|jar|jars|bottle|bottles|bag|bags|bunch|bunches|head|heads|slice|slices)\b"#, options: .regularExpression) != nil
             let descriptorAfterNumber = cleanString.range(of: #"(?i)^\s*\d+\s+(thinly|finely|roughly|coarsely|fresh(?:ly)?|minced|sliced|chopped|diced|grated|shaved|torn|rinsed|drained|peeled|zested)\b"#, options: .regularExpression) != nil
             if !hasUnitToken && descriptorAfterNumber,
                let rx = try? NSRegularExpression(pattern: #"^\s*\d+\s+"#) {
                 cleanString = rx.stringByReplacingMatches(in: cleanString, options: [], range: NSRange(cleanString.startIndex..., in: cleanString), withTemplate: "")
+            }
+        }
+
+        // TEMP DEBUG removed
+
+        // Herb pre-parse (high priority): capture lines like
+        // "10 fresh large mint leaves, very thinly sliced" or "fresh 10 large mint leaves, very thinly sliced"
+        do {
+            let herbAlt = #"(?:basil|mint|parsley|cilantro|coriander|tarragon|dill|thyme|rosemary|sage|oregano|chives)"#
+            let amountAlt = #"(one|two|three|four|five|six|seven|eight|nine|ten|a|an|\d+[\d\/\s\.]*)"#
+            let tailAlt = #"(?:,\s*(?:very\s+thinly|thinly|finely|roughly|coarsely)\s+(?:sliced|minced|chopped|zested))?"#
+            // amount-first
+            let pA = #"(?i)^\s*\#(amountAlt)\s+(?:fresh(?:ly)?\s+)?(?:small|medium|large|extra\s*large|xl\s+)?\b(\#(herbAlt))\b(?:\s+leaves?|\s+sprigs?)?\s*\#(tailAlt)\s*$"#
+            // fresh-first
+            let pB = #"(?i)^\s*(?:fresh(?:ly)?\s+)\#(amountAlt)\s+(?:small|medium|large|extra\s*large|xl\s+)?\b(\#(herbAlt))\b(?:\s+leaves?|\s+sprigs?)?\s*\#(tailAlt)\s*$"#
+            for pattern in [pA, pB] {
+                if let rx = try? NSRegularExpression(pattern: pattern) {
+                    let r = NSRange(cleanString.startIndex..., in: cleanString)
+                    if let m = rx.firstMatch(in: cleanString, options: [], range: r), m.numberOfRanges >= 3,
+                       let ar = Range(m.range(at: 1), in: cleanString),
+                       let hr = Range(m.range(at: 2), in: cleanString) {
+                        let amt = parseAmount(String(cleanString[ar]))
+                        let herb = String(cleanString[hr]).lowercased()
+                        if amt > 0 {
+                            let unit = (cleanString.range(of: #"(?i)\bsprigs?\b"#, options: .regularExpression) != nil) ? "sprigs" : "leaves"
+                            return Ingredient(name: herb, amount: amt, unit: unit, category: .produce)
+                        }
+                    }
+                }
+            }
+        }
+
+        // Simple herb fallback: leading amount + any herb + "leaves" anywhere
+        do {
+            let lower = cleanString.lowercased()
+            let herbs = ["basil","mint","parsley","cilantro","coriander","tarragon","dill","thyme","rosemary","sage","oregano","chives"]
+            if let herb = herbs.first(where: { lower.contains($0) && (lower.contains(" leaves") || lower.contains(" leaf")) }) {
+                if let rxAmt = try? NSRegularExpression(pattern: #"(?i)^\s*(\d+[\d\/\s\.]*)\b"#),
+                   let m = rxAmt.firstMatch(in: cleanString, options: [], range: NSRange(cleanString.startIndex..., in: cleanString)),
+                   m.numberOfRanges >= 2,
+                   let r = Range(m.range(at: 1), in: cleanString) {
+                    let amt = parseAmount(String(cleanString[r]))
+                    if amt > 0 {
+                        return Ingredient(name: herb, amount: amt, unit: "leaves", category: .produce)
+                    }
+                }
             }
         }
         let lower = cleanString.lowercased()
@@ -1258,7 +1398,7 @@ class LLMService: ObservableObject {
         if lower.range(of: #"\b(?:about\s+)?\d+\s+(minutes?|seconds?)\b"#, options: .regularExpression) != nil { return nil }
         
         // Try to extract amount and unit using regex (include full words to prevent leakage into name)
-        let pattern = #"(?i)(\d+[\d\/\s\.]*)\s*(cup|cups|teaspoon|teaspoons|tsp|tablespoon|tablespoons|tbsp|oz|ounce|ounces|pound|pounds|grams?|g(?![a-z])|ml|milliliter|milliliters|liter|liters|l(?![a-z])|clove|cloves|piece|pieces|pinch|pinches|can|cans|jar|jars|bottle|bottles|package|packages|bag|bags|bunch|bunches|head|heads|slice|slices|small|medium|large|extra\s*large|xl)?\s*(.*)"#
+        let pattern = #"(?i)(\d+[\d\/\s\.]*)\s*(cup|cups|teaspoon|teaspoons|tsp|tablespoon|tablespoons|tbsp|oz|ounce|ounces|pound|pounds|grams?|g(?![a-z])|ml|milliliter|milliliters|liter|liters|l(?![a-z])|clove|cloves|leaf|leaves|sprig|sprigs|piece|pieces|pinch|pinches|can|cans|jar|jars|bottle|bottles|package|packages|bag|bags|bunch|bunches|head|heads|slice|slices|small|medium|large|extra\s*large|xl)?\s*(.*)"#
         
         guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
               let match = regex.firstMatch(in: cleanString, options: [], range: NSRange(cleanString.startIndex..., in: cleanString)),
@@ -1281,6 +1421,10 @@ class LLMService: ObservableObject {
             if let commaIndex = cleanName.firstIndex(of: ",") {
                 let before = String(cleanName[..<commaIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
                 let after = String(cleanName[cleanName.index(after: commaIndex)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                // Prefer LHS when RHS is just a prep/adverb tail (e.g., "very thinly sliced")
+                if after.range(of: #"(?i)^(?:very\s+thinly|thinly|finely|roughly|coarsely)(?:\s+(?:sliced|minced|chopped|zested))?.*$"#, options: .regularExpression) != nil {
+                    cleanName = before
+                } else
                 if let rx = try? NSRegularExpression(pattern: #"(?i)\b(?:such\s+as|like|e\.g\.)\b\s*([^,;]+)"#),
                    let m = rx.firstMatch(in: after, options: [], range: NSRange(after.startIndex..., in: after)),
                    m.numberOfRanges >= 2,
@@ -2854,9 +2998,9 @@ class LLMService: ObservableObject {
         }
 
         // 2) Remove inline/trailed descriptors after comma, semicolon, en dash, or hyphen
-        // Consume the entire clause up to the next comma/semicolon or end (e.g., "; thinly sliced ...")
+        // Consume the entire clause up to the next comma/semicolon or end (e.g., "; thinly sliced ...", ", cleaned")
         cleanedName = cleanedName.replacingOccurrences(
-            of: #"(?i)(?:,|;|–|-)\s*(?:finely|roughly|coarsely|thinly|thickly|lightly|well)?\s*(?:chopped|sliced|diced|minced|grated|shredded|torn|julienned|zested|cubed|mashed|pureed|whipped|beaten|crushed|halved|quartered|drained|rinsed|patted\s+dry)\b[^,;]*"#,
+            of: #"(?i)(?:,|;|–|-)\s*(?:finely|roughly|coarsely|thinly|thickly|lightly|well)?\s*(?:chopped|sliced|diced|minced|grated|shredded|torn|julienned|zested|cubed|mashed|pureed|whipped|beaten|crushed|halved|quartered|drained|rinsed|patted\s+dry|cleaned|deveined|shucked|scaled|gutted|trimmed)\b[^,;]*"#,
             with: "",
             options: .regularExpression
         )
@@ -2889,9 +3033,9 @@ class LLMService: ObservableObject {
             options: .regularExpression
         )
 
-		// 4) Remove leading descriptors such as "finely chopped " at the start
+		// 4) Remove leading descriptors such as "finely chopped " at the start (also remove cleanliness/state descriptors like cleaned/deveined)
         cleanedName = cleanedName.replacingOccurrences(
-            of: #"(?i)^(?:finely|roughly|coarsely|thinly|thickly|lightly|well)?\s*(?:chopped|sliced|diced|minced|grated|shredded|torn|julienned|zested|cubed|mashed|pureed|whipped|beaten|crushed|halved|quartered|drained|rinsed|patted\s+dry)\s+"#,
+            of: #"(?i)^(?:finely|roughly|coarsely|thinly|thickly|lightly|well)?\s*(?:chopped|sliced|diced|minced|grated|shredded|torn|julienned|zested|cubed|mashed|pureed|whipped|beaten|crushed|halved|quartered|drained|rinsed|patted\s+dry|cleaned|deveined|shucked|scaled|gutted|trimmed)\s+"#,
             with: "",
             options: .regularExpression
         )
@@ -2947,10 +3091,33 @@ class LLMService: ObservableObject {
             options: .regularExpression
         )
 		cleanedName = cleanedName.replacingOccurrences(
-			of: #"(?i)\b(basil|parsley|mint|sage|thyme|rosemary|dill|tarragon|oregano|chives|scallions?|green onion(?:s)?)\s+leaves?\b"#,
+			of: #"(?i)\b(basil|parsley|cilantro|coriander|mint|sage|thyme|rosemary|dill|tarragon|oregano|chives|scallions?|green onion(?:s)?)\s+leaves?\b"#,
 			with: "$1",
 			options: .regularExpression
 		)
+
+		// Herb plant-part descriptors: collapse variants like "leaves and tender stems" or "and stems" to base herb
+		do {
+			let herbAlternatives = #"(?:flat[ -]leaf\s+parsley|basil|parsley|cilantro|coriander|mint|sage|thyme|rosemary|dill|tarragon|oregano|chives|scallions?|green onion(?:s)?)"#
+			// e.g., "parsley leaves and tender stems" → "parsley"
+			cleanedName = cleanedName.replacingOccurrences(
+				of: #"(?i)\b(\#(herbAlternatives))\b\s+leaves?\s+and\s+(?:tender\s+)?stems\b"#,
+				with: "$1",
+				options: .regularExpression
+			)
+			// e.g., "parsley and tender stems" → "parsley"
+			cleanedName = cleanedName.replacingOccurrences(
+				of: #"(?i)\b(\#(herbAlternatives))\b\s+and\s+(?:tender\s+)?stems\b"#,
+				with: "$1",
+				options: .regularExpression
+			)
+			// Optional convenience: "scallion tops"/"green onion tops" → base herb
+			cleanedName = cleanedName.replacingOccurrences(
+				of: #"(?i)\b(scallions?|green onion(?:s)?)\s+tops\b"#,
+				with: "$1",
+				options: .regularExpression
+			)
+		}
 
         // 6) Ensure 'fresh' is preserved but not duplicated and appears at the start when present
         if cleanedName.range(of: #"(?i)\bfresh\b"#, options: .regularExpression) != nil {
