@@ -137,7 +137,8 @@ class LLMService: ObservableObject {
         .pantry: ["flour", "sugar", "oil", "vinegar", "rice", "pasta", "noodles", "stock", "broth"],
         .spices: [
             // core spices and blends
-            "turmeric", "cumin", "coriander", "garam masala", "curry powder", "paprika", "smoked paprika",
+            "turmeric", "cumin", "coriander", "ground coriander", "coriander seed", "coriander seeds",
+            "garam masala", "curry powder", "paprika", "smoked paprika",
             "chili powder", "chilli powder", "chile powder", "cayenne", "sumac", "za'atar", "five-spice",
             "allspice", "allspice berries", "bay leaf", "bay leaves", "star anise", "anise seed", "fennel seed",
             "mustard seed", "fenugreek", "clove", "cloves", "nutmeg", "mace", "cardamom", "saffron",
@@ -625,6 +626,13 @@ class LLMService: ObservableObject {
                 recipe.ingredients = sanitized
                 recipe.isParsed = true
                 print("✅ Successfully parsed \(ingredients.count) ingredients from structured data")
+                // Log categorized results
+                var counts: [GroceryCategory: Int] = [:]
+                for ing in sanitized { counts[ing.category, default: 0] += 1 }
+                print("📊 Category counts: " + GroceryCategory.allCases.map { "\($0.displayName)=\(counts[$0] ?? 0)" }.joined(separator: ", "))
+                for ing in sanitized {
+                    print("🔹 \(ing.name) — \(ing.amount) \(ing.unit) [\(ing.category.displayName)]")
+                }
                 return recipe
             } else {
                 print("❌ Not enough ingredients parsed from structured data (\(ingredients.count))")
@@ -1415,8 +1423,8 @@ class LLMService: ObservableObject {
     private func determineCategory(_ name: String) -> GroceryCategory {
         let lowercasedName = name.lowercased()
 
-        // Spices-first for pepper variants to avoid Produce catch on generic "pepper"
-        if lowercasedName.range(of: #"(?i)\b(black\s+pepper|white\s+pepper|peppercorns?|red\s+pepper\s+flakes)\b"#, options: .regularExpression) != nil {
+        // Spices-first for pepper variants and salts to avoid Produce/override collisions
+        if lowercasedName.range(of: #"(?i)\b(black\s+pepper|white\s+pepper|peppercorns?|red\s+pepper\s+flakes|salt|sea\s+salt|kosher\s+salt|table\s+salt)\b"#, options: .regularExpression) != nil {
             return .spices
         }
 
@@ -1425,9 +1433,14 @@ class LLMService: ObservableObject {
             return .produce
         }
 
-        // Check category overrides (spirits, stocks, etc.) with simple containment
+        // Check category overrides (spirits, stocks, salts/peppers) with word-boundary matching
         for (keyword, category) in categoryOverrides {
-            if lowercasedName.contains(keyword) {
+            let base = NSRegularExpression.escapedPattern(for: keyword)
+            // Allow spaces in keyword; match with spaces/hyphens flexibly
+            let flexible = base.replacingOccurrences(of: "\\s+", with: "[\\s-]+", options: .regularExpression)
+            let pattern = "(?i)(?:^|[^a-z])" + flexible + "(?:$|[^a-z])"
+            if let rx = try? NSRegularExpression(pattern: pattern),
+               rx.firstMatch(in: lowercasedName, options: [], range: NSRange(lowercasedName.startIndex..., in: lowercasedName)) != nil {
                 return category
             }
         }
@@ -1463,6 +1476,10 @@ class LLMService: ObservableObject {
                 let pattern = "(?i)(?:^|[^a-z])" + flexible + "(?:$|[^a-z])"
                 if let rx = try? NSRegularExpression(pattern: pattern),
                    rx.firstMatch(in: lowercasedName, options: [], range: NSRange(lowercasedName.startIndex..., in: lowercasedName)) != nil {
+                    // Enforce salts/peppers as Spices even if generic 'pepper' matched Produce
+                    if lowercasedName.range(of: #"(?i)\b(black\s+pepper|white\s+pepper|peppercorns?|red\s+pepper\s+flakes|salt|sea\s+salt|kosher\s+salt|table\s+salt)\b"#, options: .regularExpression) != nil {
+                        return .spices
+                    }
                     return category
                 }
             }
@@ -1555,6 +1572,48 @@ class LLMService: ObservableObject {
         // TEMP DEBUG removed
         var cleanString = ingredientString.trimmingCharacters(in: .whitespacesAndNewlines)
         var isCannedOrJarredItem: Bool = false
+
+        // Herb with explicit volume + "leaves" (e.g., "1 tablespoon picked fresh thyme leaves") → keep volume
+        do {
+            // Strict order: amount + unit + herb [leaves], allowing trailing descriptors
+            var pattern = #"(?i)^\s*(\d+[\d\/\s\.]*)\s*(tablespoons?|tbsp|teaspoons?|tsp|cups?|ounces?|oz|milliliters?|ml|liters?|l)\s+(?:picked\s+)?(?:fresh(?:ly)?\s+)?(basil|mint|parsley|cilantro|coriander|tarragon|dill|thyme|rosemary|sage|oregano|chives)(?:\s+leaves?)?(?:[\s,;].*)?$"#
+            if let rx = try? NSRegularExpression(pattern: pattern) {
+                let r = NSRange(cleanString.startIndex..., in: cleanString)
+                if let m = rx.firstMatch(in: cleanString, options: [], range: r), m.numberOfRanges >= 4,
+                   let ar = Range(m.range(at: 1), in: cleanString),
+                   let ur = Range(m.range(at: 2), in: cleanString),
+                   let hr = Range(m.range(at: 3), in: cleanString) {
+                    let amount = parseAmount(String(cleanString[ar]))
+                    let unit = standardizeUnit(String(cleanString[ur]))
+                    let herb = String(cleanString[hr]).lowercased()
+                    // Treat plain "coriander" as a spice unless explicitly fresh/leaves/sprigs
+                    let hasLeaf = cleanString.range(of: #"(?i)\b(leaves?|sprigs?)\b"#, options: .regularExpression) != nil
+                    let hasFreshOrPicked = cleanString.range(of: #"(?i)\b(fresh(?:ly)?|picked)\b"#, options: .regularExpression) != nil
+                    let isCoriander = (herb == "coriander")
+                    let category: GroceryCategory = (isCoriander && !hasLeaf && !hasFreshOrPicked) ? .spices : .produce
+                    return Ingredient(name: herb, amount: amount, unit: unit, category: category)
+                }
+            }
+            // Loose order: capture amount + unit anywhere AND an herb token with optional "leaves"
+            pattern = #"(?is)(\d+[\d\/\s\.]*)\s*(tablespoons?|tbsp|teaspoons?|tsp|cups?|ounces?|oz|milliliters?|ml|liters?|l).*\b(basil|mint|parsley|cilantro|coriander|tarragon|dill|thyme|rosemary|sage|oregano|chives)(?:\s+leaves?)?\b"#
+            if let rx = try? NSRegularExpression(pattern: pattern) {
+                let r = NSRange(cleanString.startIndex..., in: cleanString)
+                if let m = rx.firstMatch(in: cleanString, options: [], range: r), m.numberOfRanges >= 4,
+                   let ar = Range(m.range(at: 1), in: cleanString),
+                   let ur = Range(m.range(at: 2), in: cleanString),
+                   let hr = Range(m.range(at: 3), in: cleanString) {
+                    let amount = parseAmount(String(cleanString[ar]))
+                    let unit = standardizeUnit(String(cleanString[ur]))
+                    let herb = String(cleanString[hr]).lowercased()
+                    // Treat plain "coriander" as a spice unless explicitly fresh/leaves/sprigs
+                    let hasLeaf = cleanString.range(of: #"(?i)\b(leaves?|sprigs?)\b"#, options: .regularExpression) != nil
+                    let hasFreshOrPicked = cleanString.range(of: #"(?i)\b(fresh(?:ly)?|picked)\b"#, options: .regularExpression) != nil
+                    let isCoriander = (herb == "coriander")
+                    let category: GroceryCategory = (isCoriander && !hasLeaf && !hasFreshOrPicked) ? .spices : .produce
+                    return Ingredient(name: herb, amount: amount, unit: unit, category: category)
+                }
+            }
+        }
 
         // Toppings / garnish / for serving handling (no explicit measurement)
         do {
@@ -2113,16 +2172,36 @@ class LLMService: ObservableObject {
             print("❌ Invalid URL: \(url)")
             throw LLMServiceError.invalidURL
         }
-        let (data, response) = try await URLSession.shared.data(from: url)
-        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-            print("❌ Invalid HTTP response")
+        // Build a browser-like request with headers to avoid basic bot blocks
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 20
+        request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile Safari/605.1.15", forHTTPHeaderField: "User-Agent")
+        request.setValue("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", forHTTPHeaderField: "Accept")
+        request.setValue("en-US,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+
+        // One retry with backoff on non-200
+        func perform() async throws -> (Data, HTTPURLResponse) {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else { throw LLMServiceError.invalidResponse }
+            return (data, http)
+        }
+
+        var (data, http) = try await perform()
+        if http.statusCode != 200 {
+            try await Task.sleep(nanoseconds: 300_000_000) // 300ms backoff
+            (data, http) = try await perform()
+        }
+        guard http.statusCode == 200 else {
+            let preview = String(data: data.prefix(300), encoding: .utf8) ?? "<non-text>"
+            print("❌ Invalid HTTP response: \(http.statusCode)\nPreview: \(preview)")
             throw LLMServiceError.invalidResponse
         }
-        guard let htmlString = String(data: data, encoding: .utf8) else {
-            print("❌ Failed to decode HTML content")
-            throw LLMServiceError.invalidResponse
-        }
-        return htmlString
+        // Try UTF-8 first, fallback to ISO-8859-1
+        if let htmlUTF8 = String(data: data, encoding: .utf8) { return htmlUTF8 }
+        if let htmlLatin1 = String(data: data, encoding: .isoLatin1) { return htmlLatin1 }
+        print("❌ Failed to decode HTML content in UTF-8/Latin1")
+        throw LLMServiceError.invalidResponse
     }
     
     private func createRecipeParsingPrompt(ingredientContent: String) -> String {
@@ -2296,6 +2375,12 @@ class LLMService: ObservableObject {
                             unit: ingredientDict["unit"],
                             category: category
                         )
+                        if ingredient.name.lowercased().contains("salt") && ingredient.category != .spices {
+                            print("⚠️ Salt classified as \(ingredient.category.displayName)")
+                        }
+                        if ingredient.name.lowercased().contains("black pepper") && ingredient.category != .spices {
+                            print("⚠️ Black pepper classified as \(ingredient.category.displayName)")
+                        }
                         
                         // Validate ingredient quality
                         let validationResult = validateIngredient(ingredient, originalContent: "")
@@ -2648,8 +2733,8 @@ class LLMService: ObservableObject {
             // Split salt and pepper combo if present
             let lower = sanitized.name.lowercased()
             if lower.contains("salt") && lower.contains("pepper") && lower.contains(" and ") {
-                let salt = Ingredient(name: "salt", amount: 0.0, unit: "To taste", category: .pantry)
-                let pepper = Ingredient(name: "black pepper", amount: 0.0, unit: "To taste", category: .pantry)
+                let salt = Ingredient(name: "salt", amount: 0.0, unit: "To taste", category: .spices)
+                let pepper = Ingredient(name: "black pepper", amount: 0.0, unit: "To taste", category: .spices)
                 if !result.contains(where: { $0.name.lowercased() == salt.name }) { result.append(salt) }
                 if !result.contains(where: { $0.name.lowercased() == pepper.name }) { result.append(pepper) }
                 continue
@@ -2720,6 +2805,64 @@ class LLMService: ObservableObject {
         name = name.replacingOccurrences(of: #"[\s;:,\)\.]+$"#, with: "", options: .regularExpression)
         name = name.replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
         
+        // 2.1) Reformat ground spices so the spice name comes first, with state in parentheses: "Cumin (Ground)"
+        do {
+            // Normalize any existing lowercase/uppercase variants of "(ground)" to "(Ground)"
+            name = name.replacingOccurrences(of: #"(?i)\(\s*ground\s*\)"#, with: "(Ground)", options: .regularExpression)
+
+            let alreadyFormatted = name.range(of: #"\(Ground\)$"#, options: .regularExpression) != nil
+            if !alreadyFormatted {
+                let groundable: Set<String> = [
+                    "cumin", "coriander", "allspice", "cinnamon", "nutmeg", "mustard", "mustard seed", "mustard seeds", "turmeric"
+                ]
+                let lc = name.lowercased().trimmingCharacters(in: .whitespaces)
+                var base: String? = nil
+                // Patterns: "ground X", "X, ground", "X ground"
+                if let m = try? NSRegularExpression(pattern: #"(?i)^\s*ground\s+(.+?)\s*$"#)
+                    .firstMatch(in: lc, options: [], range: NSRange(lc.startIndex..., in: lc)),
+                   let r = Range(m.range(at: 1), in: lc) {
+                    base = String(lc[r])
+                }
+                if base == nil {
+                    if let m = try? NSRegularExpression(pattern: #"(?i)^\s*(.+?),\s*ground\s*$"#)
+                        .firstMatch(in: lc, options: [], range: NSRange(lc.startIndex..., in: lc)),
+                       let r = Range(m.range(at: 1), in: lc) {
+                        base = String(lc[r])
+                    }
+                }
+                if base == nil {
+                    if let m = try? NSRegularExpression(pattern: #"(?i)^\s*(.+?)\s+ground\s*$"#)
+                        .firstMatch(in: lc, options: [], range: NSRange(lc.startIndex..., in: lc)),
+                       let r = Range(m.range(at: 1), in: lc) {
+                        base = String(lc[r])
+                    }
+                }
+                if let b = base {
+                    let bTrim = b.trimmingCharacters(in: .whitespaces)
+                    // Normalize coriander seeds → coriander
+                    let bNorm = bTrim.replacingOccurrences(of: #"(?i)\s*seeds?$"#, with: "", options: .regularExpression)
+                    if groundable.contains(bTrim) || groundable.contains(bNorm) {
+                        func titleCase(_ s: String) -> String {
+                            return s.split(separator: " ").map { w in
+                                var t = String(w)
+                                if t.isEmpty { return t }
+                                let first = t.removeFirst()
+                                return String(first).uppercased() + t
+                            }.joined(separator: " ")
+                        }
+                        let displayBase: String = {
+                            // Preserve "mustard seed(s)" wording if present; else use normalized
+                            if bTrim.range(of: #"(?i)^mustard\s+seeds?$"#, options: .regularExpression) != nil {
+                                return titleCase(bTrim.lowercased())
+                            }
+                            return titleCase(bNorm.lowercased())
+                        }()
+                        name = "\(displayBase) (Ground)"
+                    }
+                }
+            }
+        }
+
         // 2) Remove leading amounts/units from name; keep them only in fields
         let leadingUnitPattern = #"(?i)^(?:[\d¼½¾/\.\-]+\s+)?(cups?|tablespoons?|tbsp|teaspoons?|tsp|ounces?|oz|pounds?|lb|lbs|grams?|g|milliliters?|ml|liters?|l(?![a-z])|pints?|quarts?|gallons?|servings?|slices?|cloves?|pieces?|balls?|buns?)\b\s*"#
         if let rx = try? NSRegularExpression(pattern: leadingUnitPattern) {
@@ -4957,15 +5100,25 @@ class LLMService: ObservableObject {
         ("corn oil", .pantry),
         ("oil", .pantry), // generic catch-all for cooking oils
 
-        // Pantry: common spices that could collide with Produce keywords
-        ("garlic powder", .pantry),
-        ("cayenne pepper", .pantry),
-        ("cayenne", .pantry),
-        ("peppercorn", .pantry),
-        ("peppercorns", .pantry),
-        ("black pepper", .pantry),
-        ("ground pepper", .pantry),
-        ("ground black pepper", .pantry),
+        // Spices: common spice items
+        ("garlic powder", .spices),
+        ("cayenne pepper", .spices),
+        ("cayenne", .spices),
+        ("peppercorn", .spices),
+        ("peppercorns", .spices),
+        ("black pepper", .spices),
+        ("ground pepper", .spices),
+        ("ground black pepper", .spices),
+        ("red pepper flakes", .spices),
+        ("crushed red pepper", .spices),
+        ("chili flakes", .spices),
+        ("chile flakes", .spices),
+        // Salts to Spices per app grouping
+        ("salt", .spices),
+        ("sea salt", .spices),
+        ("kosher salt", .spices),
+        ("table salt", .spices),
+        // Pantry: other shelf items
         ("dried mint", .pantry),
         ("miso", .pantry),
         ("vinegar", .pantry),
@@ -4982,11 +5135,7 @@ class LLMService: ObservableObject {
         ("gelatin", .pantry),
         ("gelatine", .pantry),
 
-        // Pantry: chile/pepper flake seasonings
-        ("red pepper flakes", .pantry),
-        ("crushed red pepper", .pantry),
-        ("chili flakes", .pantry),
-        ("chile flakes", .pantry),
+        // (moved flake seasonings to .spices above)
 
         // Dairy: whipped toppings and creams (brand-inclusive)
         ("whipped topping", .dairy),
@@ -5036,6 +5185,12 @@ class LLMService: ObservableObject {
 		("lemon zest", .produce),
 		("lime zest", .produce),
 		("orange zest", .produce),
-		("grapefruit zest", .produce)
+		("grapefruit zest", .produce),
+
+		// Spices: coriander defaults to spice (distinct from fresh cilantro)
+		("coriander", .spices),
+		("ground coriander", .spices),
+		("coriander seed", .spices),
+		("coriander seeds", .spices)
     ]
 }

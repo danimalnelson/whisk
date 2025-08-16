@@ -97,16 +97,17 @@ class DataManager: ObservableObject {
                     existing: list.ingredients[existingIndex].amount,
                     existingUnit: list.ingredients[existingIndex].unit,
                     new: newIngredient.amount,
-                    newUnit: newIngredient.unit
+                    newUnit: newIngredient.unit,
+                    ingredientName: newIngredient.name
                 )
                 
                 list.ingredients[existingIndex].amount = consolidatedAmount.amount
                 list.ingredients[existingIndex].unit = consolidatedAmount.unit
                 
-                print("🛒 Consolidated: \(newIngredient.name) (\(newIngredient.amount) \(newIngredient.unit)) + existing → \(consolidatedAmount.amount) \(consolidatedAmount.unit)")
+                print("🛒 Consolidated: \(newIngredient.name) (\(newIngredient.amount) \(newIngredient.unit), \(newIngredient.category)) + existing → \(consolidatedAmount.amount) \(consolidatedAmount.unit) [\(list.ingredients[existingIndex].category)]")
             } else {
                 list.ingredients.append(newIngredient)
-                print("🛒 Added new ingredient: \(newIngredient.name)")
+                print("🛒 Added new ingredient: \(newIngredient.name) — \(newIngredient.amount) \(newIngredient.unit) [\(newIngredient.category)]")
             }
         }
         
@@ -145,7 +146,7 @@ class DataManager: ObservableObject {
         
         // Smart ingredient consolidation
         for newIngredient in filteredIngredients {
-            print("🛒 Processing ingredient: \(newIngredient.name) - \(newIngredient.amount) \(newIngredient.unit)")
+            print("🛒 Processing ingredient: \(newIngredient.name) - \(newIngredient.amount) \(newIngredient.unit) [\(newIngredient.category)]")
             
             if let existingIndex = findConsolidatableIngredient(newIngredient, in: updatedList.ingredients) {
                 // Combine amounts with unit conversion if needed
@@ -153,16 +154,17 @@ class DataManager: ObservableObject {
                     existing: updatedList.ingredients[existingIndex].amount,
                     existingUnit: updatedList.ingredients[existingIndex].unit,
                     new: newIngredient.amount,
-                    newUnit: newIngredient.unit
+                    newUnit: newIngredient.unit,
+                    ingredientName: newIngredient.name
                 )
                 
                 updatedList.ingredients[existingIndex].amount = consolidatedAmount.amount
                 updatedList.ingredients[existingIndex].unit = consolidatedAmount.unit
                 
-                print("🛒 Consolidated: \(newIngredient.name) (\(newIngredient.amount) \(newIngredient.unit)) + existing → \(consolidatedAmount.amount) \(consolidatedAmount.unit)")
+                print("🛒 Consolidated: \(newIngredient.name) (\(newIngredient.amount) \(newIngredient.unit), \(newIngredient.category)) + existing → \(consolidatedAmount.amount) \(consolidatedAmount.unit) [\(updatedList.ingredients[existingIndex].category)]")
             } else {
                 updatedList.ingredients.append(newIngredient)
-                print("🛒 Added new ingredient")
+                print("🛒 Added new ingredient: \(newIngredient.name) — \(newIngredient.amount) \(newIngredient.unit) [\(newIngredient.category)]")
             }
         }
         
@@ -220,27 +222,69 @@ class DataManager: ObservableObject {
     // MARK: - Ingredient Consolidation
     
     private func findConsolidatableIngredient(_ newIngredient: Ingredient, in existingIngredients: [Ingredient]) -> Int? {
-        // Strict consolidation policy:
+        // Consolidation policy:
         // - Exact name match (case-insensitive)
         // - Same category
-        // - Same unit (case-insensitive)
-        // - Same package size (amount equality within small epsilon)
+        // - Units are identical OR compatible (both volume, both weight) OR either is "To taste"
+        // - Count-like units consolidate only when the unit text matches (e.g., cloves+cloves)
+
         let newName = newIngredient.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let newUnit = newIngredient.unit.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let newAmount = newIngredient.amount
-        let epsilon = 1e-6
 
         for (index, existing) in existingIngredients.enumerated() {
             let existingName = existing.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             let existingUnit = existing.unit.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            if existingName == newName,
-               existing.category == newIngredient.category,
-               existingUnit == newUnit,
-               abs(existing.amount - newAmount) < epsilon {
+            // Require same category first
+            guard existing.category == newIngredient.category else { continue }
+            // Names must match exactly OR be garlic-equivalent ("garlic" vs "garlic cloves")
+            let namesEqual = (existingName == newName)
+            let garlicEquivalent = isGarlicName(existingName) && isGarlicName(newName)
+            if !namesEqual && !garlicEquivalent { continue }
+
+            // Unify zero-like items (e.g., "To taste" / "For serving")
+            if isZeroLikeUnit(existingUnit) || isZeroLikeUnit(newUnit) {
+                print("🔎 Consolidation match (zero-like): \(existing.name) [\(existingUnit)]  +  \(newIngredient.name) [\(newUnit)]")
                 return index
+            }
+
+            // Same unit → consolidate
+            if existingUnit == newUnit {
+                print("🔎 Consolidation match (same unit): \(existing.name) [\(existingUnit)]  +  \(newIngredient.name) [\(newUnit)]")
+                return index
+            }
+
+            // Both volume → consolidate with conversion
+            if isVolumeUnit(existingUnit) && isVolumeUnit(newUnit) {
+                print("🔎 Consolidation match (volume-volume): \(existing.name) [\(existingUnit)]  +  \(newIngredient.name) [\(newUnit)]")
+                return index
+            }
+
+            // Both weight → consolidate with conversion
+            if isWeightUnit(existingUnit) && isWeightUnit(newUnit) {
+                print("🔎 Consolidation match (weight-weight): \(existing.name) [\(existingUnit)]  +  \(newIngredient.name) [\(newUnit)]")
+                return index
+            }
+
+            // Count-like units only consolidate when the unit tokens match
+            if isCountUnit(existingUnit) && isCountUnit(newUnit) && existingUnit == newUnit { return index }
+
+            // Garlic special-case: allow count↔volume consolidation (cloves ↔ tsp/tbsp)
+            let isGarlic = garlicEquivalent
+            if isGarlic {
+                let countVsVol = (isCountUnit(existingUnit) && isVolumeUnit(newUnit)) || (isVolumeUnit(existingUnit) && isCountUnit(newUnit))
+                if countVsVol {
+                    print("🔎 Consolidation match (garlic count↔volume): \(existing.name) [\(existingUnit)]  +  \(newIngredient.name) [\(newUnit)]")
+                    return index
+                }
             }
         }
         return nil
+    }
+
+    private func isGarlicName(_ s: String) -> Bool {
+        let lc = s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        // Match exactly "garlic" or "garlic clove(s)"
+        return lc.range(of: #"^(?:garlic(?:\s+cloves?)?)$"#, options: .regularExpression) != nil
     }
     
     private func areSimilarIngredients(_ name1: String, _ name2: String) -> Bool {
@@ -249,23 +293,121 @@ class DataManager: ObservableObject {
         return false
     }
     
-    private func consolidateAmounts(existing: Double, existingUnit: String, new: Double, newUnit: String) -> (amount: Double, unit: String) {
-        // If units are the same, simple addition
-        if existingUnit.lowercased() == newUnit.lowercased() {
-            return (existing + new, existingUnit)
+    private func consolidateAmounts(existing: Double, existingUnit: String, new: Double, newUnit: String, ingredientName: String) -> (amount: Double, unit: String) {
+        let u1 = existingUnit.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        let u2 = newUnit.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Zero-like units (e.g., "To taste" / "For serving"): treat as amount 0.
+        let u1Zero = isZeroLikeUnit(u1)
+        let u2Zero = isZeroLikeUnit(u2)
+        if u1Zero && u2Zero {
+            // Both are zero-like → keep as zero-like, prefer existing label
+            return (0.0, existingUnit.isEmpty ? newUnit : existingUnit)
+        } else if u1Zero && !u2Zero {
+            // Existing is zero-like, new is measured → adopt measured
+            return (new, newUnit)
+        } else if !u1Zero && u2Zero {
+            // Existing is measured, new is zero-like → keep measured
+            return (existing, existingUnit)
         }
-        
-        // Convert to common units for consolidation
-        let existingInGrams = convertToGrams(amount: existing, unit: existingUnit)
-        let newInGrams = convertToGrams(amount: new, unit: newUnit)
-        
-        if existingInGrams > 0 && newInGrams > 0 {
-            let totalGrams = existingInGrams + newInGrams
-            return convertFromGrams(grams: totalGrams, preferredUnit: existingUnit)
+
+        // Same unit → simple addition
+        if u1 == u2 { return (existing + new, existingUnit) }
+
+        // Garlic special-case: merge cloves and tsp using a heuristic mapping.
+        if ingredientName.lowercased().contains("garlic") {
+            let clovesPerTeaspoon = 1.0 // heuristic: 1 medium clove ≈ 1 tsp grated
+            // u1 is existing unit; u2 is new unit. Convert both to teaspoons if possible, then sum.
+            var totalTeaspoons: Double = 0
+            var couldMapAll = true
+            let mapToTeaspoons: (Double, String) -> Double? = { amt, unit in
+                switch unit {
+                case "teaspoon", "teaspoons", "tsp": return amt
+                case "tablespoon", "tablespoons", "tbsp": return amt * 3.0
+                case "clove", "cloves": return amt * clovesPerTeaspoon
+                default: return nil
+                }
+            }
+            if let t1 = mapToTeaspoons(existing, u1) { totalTeaspoons += t1 } else { couldMapAll = false }
+            if let t2 = mapToTeaspoons(new, u2) { totalTeaspoons += t2 } else { couldMapAll = false }
+            if couldMapAll {
+                // Prefer teaspoons; promote to tbsp when divisible by 3
+                if abs(round(totalTeaspoons) - totalTeaspoons) < 1e-6, Int(round(totalTeaspoons)) % 3 == 0 {
+                    return (Double(Int(round(totalTeaspoons)) / 3), "tablespoons")
+                } else {
+                    return (totalTeaspoons, "teaspoons")
+                }
+            }
         }
-        
-        // If conversion failed, keep existing unit and add amounts
-        return (existing + new, existingUnit)
+
+        // Volume consolidation
+        if isVolumeUnit(u1) && isVolumeUnit(u2) {
+            let m1 = convertToMilliliters(amount: existing, unit: u1)
+            let m2 = convertToMilliliters(amount: new, unit: u2)
+            if m1 > 0 && m2 > 0 {
+                return convertFromMilliliters(ml: m1 + m2, preferredUnit: existingUnit)
+            }
+        }
+
+        // Weight consolidation (grams)
+        if isWeightUnit(u1) && isWeightUnit(u2) {
+            let g1 = convertToGrams(amount: existing, unit: u1)
+            let g2 = convertToGrams(amount: new, unit: u2)
+            if g1 > 0 && g2 > 0 {
+                return convertFromGrams(grams: g1 + g2, preferredUnit: existingUnit)
+            }
+        }
+
+        // Count-like units: only consolidate when units match (handled by early return). Otherwise, keep separate.
+        // If we somehow reach here, fall back to keeping existing unit and amount, adding new amount only when units match (already handled).
+        return (existing, existingUnit)
+    }
+
+    // MARK: - Unit Kind Helpers
+    private func isZeroLikeUnit(_ unit: String) -> Bool {
+        let u = unit.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return u == "to taste" || u == "for serving"
+    }
+
+    private func isVolumeUnit(_ unit: String) -> Bool {
+        let u = unit.lowercased()
+        let volumeUnits: Set<String> = [
+            "teaspoon", "teaspoons", "tsp",
+            "tablespoon", "tablespoons", "tbsp",
+            "cup", "cups",
+            "pint", "pints",
+            "quart", "quarts",
+            "gallon", "gallons",
+            "milliliter", "milliliters", "ml",
+            "liter", "liters", "l"
+        ]
+        return volumeUnits.contains(u)
+    }
+
+    private func isWeightUnit(_ unit: String) -> Bool {
+        let u = unit.lowercased()
+        let weightUnits: Set<String> = [
+            "ounce", "ounces", "oz",
+            "pound", "pounds", "lb", "lbs",
+            "gram", "grams", "g",
+            "kilogram", "kilograms", "kg"
+        ]
+        return weightUnits.contains(u)
+    }
+
+    private func isCountUnit(_ unit: String) -> Bool {
+        let u = unit.lowercased()
+        let countUnits: Set<String> = [
+            "piece", "pieces",
+            "clove", "cloves",
+            "sprig", "sprigs",
+            "leaf", "leaves",
+            "head", "heads",
+            "bunch", "bunches",
+            "small", "medium", "large",
+            "serving", "servings"
+        ]
+        return countUnits.contains(u)
     }
     
     private func convertToGrams(amount: Double, unit: String) -> Double {
@@ -283,6 +425,55 @@ class DataManager: ObservableObject {
             return amount * 1000
         default:
             return 0 // Can't convert volume to weight
+        }
+    }
+
+    private func convertToMilliliters(amount: Double, unit: String) -> Double {
+        let u = unit.lowercased()
+        switch u {
+        case "teaspoon", "teaspoons", "tsp":
+            return amount * 4.92892
+        case "tablespoon", "tablespoons", "tbsp":
+            return amount * 14.7868
+        case "cup", "cups":
+            return amount * 236.588
+        case "pint", "pints":
+            return amount * 473.176
+        case "quart", "quarts":
+            return amount * 946.353
+        case "gallon", "gallons":
+            return amount * 3785.41
+        case "milliliter", "milliliters", "ml":
+            return amount
+        case "liter", "liters", "l":
+            return amount * 1000
+        default:
+            return 0
+        }
+    }
+
+    private func convertFromMilliliters(ml: Double, preferredUnit: String) -> (amount: Double, unit: String) {
+        let u = preferredUnit.lowercased()
+        switch u {
+        case "teaspoon", "teaspoons", "tsp":
+            return (ml / 4.92892, "teaspoons")
+        case "tablespoon", "tablespoons", "tbsp":
+            return (ml / 14.7868, "tablespoons")
+        case "cup", "cups":
+            return (ml / 236.588, "cups")
+        case "pint", "pints":
+            return (ml / 473.176, "pints")
+        case "quart", "quarts":
+            return (ml / 946.353, "quarts")
+        case "gallon", "gallons":
+            return (ml / 3785.41, "gallons")
+        case "milliliter", "milliliters", "ml":
+            return (ml, "milliliters")
+        case "liter", "liters", "l":
+            return (ml / 1000, "liters")
+        default:
+            // Default to tablespoons for reasonable display if preferred is unknown volume
+            return (ml / 14.7868, "tablespoons")
         }
     }
     
