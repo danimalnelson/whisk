@@ -134,7 +134,18 @@ class LLMService: ObservableObject {
         .deli: ["ham", "salami", "prosciutto", "nduja", "'nduja"],
         .bakery: ["bread", "baguette", "bun"],
         .frozen: ["frozen"],
-        .pantry: ["flour", "sugar", "salt", "pepper", "oil", "vinegar", "rice", "pasta", "noodles", "stock", "broth", "spice", "spices"],
+        .pantry: ["flour", "sugar", "oil", "vinegar", "rice", "pasta", "noodles", "stock", "broth"],
+        .spices: [
+            // core spices and blends
+            "turmeric", "cumin", "coriander", "garam masala", "curry powder", "paprika", "smoked paprika",
+            "chili powder", "chilli powder", "chile powder", "cayenne", "sumac", "za'atar", "five-spice",
+            "allspice", "allspice berries", "bay leaf", "bay leaves", "star anise", "anise seed", "fennel seed",
+            "mustard seed", "fenugreek", "clove", "cloves", "nutmeg", "mace", "cardamom", "saffron",
+            // peppers as spices
+            "black pepper", "white pepper", "peppercorn", "peppercorns", "red pepper flakes", "chili flakes", "chile flakes",
+            // salts
+            "salt", "sea salt", "kosher salt", "table salt"
+        ],
         .dairy: ["milk", "butter", "cream", "cheese", "yogurt"],
         .beverages: ["wine", "beer", "soda", "cocktail"]
     ]
@@ -3176,6 +3187,19 @@ class LLMService: ObservableObject {
             }
         }
 
+        // If item is recognized as a spice by keywords, ensure category is Spices
+        do {
+            let spiceTokens = self.categoryKeywords[.spices] ?? []
+            for token in spiceTokens {
+                let base = NSRegularExpression.escapedPattern(for: token)
+                let pattern = "(?i)(?:^|[^a-z])" + base + "(?:$|[^a-z])"
+                if let rx = try? NSRegularExpression(pattern: pattern),
+                   rx.firstMatch(in: lowercasedName, options: [], range: NSRange(lowercasedName.startIndex..., in: lowercasedName)) != nil {
+                    return (amount: standardizedAmount, unit: standardizedUnit)
+                }
+            }
+        }
+
         return (amount: standardizedAmount, unit: standardizedUnit)
     }
     
@@ -3263,14 +3287,7 @@ class LLMService: ObservableObject {
             }
         }
         
-        // Check if the ingredient name contains any category-specific keywords
-        for (category, keywords) in categoryKeywords {
-            for keyword in keywords {
-                if lowercasedName.contains(keyword) {
-                    return category
-                }
-            }
-        }
+        // No-op: handled by regex plural-tolerant matching above
         
         // Explicit pantry classification for stocks/broths (avoid beverage/meat misclassification)
         if lowercasedName.range(of: #"(?i)\b(chicken|beef|vegetable|veggie|turkey|bone)\s+(stock|broth)\b"#, options: .regularExpression) != nil {

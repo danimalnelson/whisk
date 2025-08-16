@@ -24,6 +24,7 @@ enum GroceryCategory: String, CaseIterable, Codable {
     case bakery = "Bakery"
     case frozen = "Frozen"
     case pantry = "Pantry"
+    case spices = "Spices"
     case dairy = "Dairy"
     case beverages = "Beverages"
     
@@ -39,6 +40,7 @@ enum GroceryCategory: String, CaseIterable, Codable {
         case .bakery: return "birthday.cake.fill"
         case .frozen: return "snowflake"
         case .pantry: return "cabinet.fill"
+        case .spices: return "flame"
         case .dairy: return "drop.fill"
         case .beverages: return "cup.and.saucer.fill"
         }
