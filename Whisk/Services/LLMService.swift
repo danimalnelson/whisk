@@ -96,6 +96,7 @@ class LLMService: ObservableObject {
         "gal": "gallon", "gallon": "gallons", "gallons": "gallons",
         "ml": "milliliters", "milliliter": "milliliters", "milliliters": "milliliters",
         "l": "liters", "liter": "liters", "liters": "liters",
+        "serving": "servings", "servings": "servings",
         
         // Weight
         "oz": "ounces", "ounce": "ounces", "ounces": "ounces",
@@ -124,7 +125,7 @@ class LLMService: ObservableObject {
             "apple", "banana", "lemon", "lime", "orange", "grapefruit",
             "lettuce", "onion", "garlic", "tomato", "pepper", "cucumber",
             "spinach", "kale", "zest", "juice", "parsley", "mint", "chives",
-            "basil", "cilantro", "shallot",
+            "basil", "cilantro", "shallot", "scallion", "green onion", "spring onion",
             // Roots and tubers
             "carrot", "carrots", "potato", "potatoes", "sweet potato", "sweet potatoes",
             "yam", "yams", "yukon gold", "russet"
@@ -872,6 +873,13 @@ class LLMService: ObservableObject {
                                 }
                             }
                             unit = standardizeUnit(unitRaw)
+                            // Normalize leading word-like units such as "quarts", "pints", "gallons", "servings"
+                            if let amountR = Range(amountRange, in: normalizedLine) {
+                                let between = normalizedLine[amountR.upperBound..<unitRangeSwift.lowerBound]
+                                if between.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                    // OK: already amount + unit format
+                                }
+                            }
                             // Look back between amount and unit for a parenthetical size and include it in the unit
                             if let amountR = Range(amountRange, in: normalizedLine) {
                                 let between = normalizedLine[amountR.upperBound..<unitRangeSwift.lowerBound]
@@ -1397,7 +1405,7 @@ class LLMService: ObservableObject {
         let lowercasedName = name.lowercased()
 
         // Prefer Produce for fresh roots/spices, peppers, onions, carrots, potatoes (handle plural forms)
-        if lowercasedName.range(of: #"(?i)\b(ginger|scotch\s+bonnet|habanero|jalapeño|jalapeno|bell\s+peppers?|peppers?|onions?|shallots?|carrots?|potatoes?|yukon\s+gold|russet)\b"#, options: .regularExpression) != nil {
+        if lowercasedName.range(of: #"(?i)\b(ginger|scotch\s+bonnet|habanero|jalapeño|jalapeno|bell\s+peppers?|peppers?|onions?|shallots?|scallions?|green\s+onions?|spring\s+onions?|carrots?|potatoes?|yukon\s+gold|russet)\b"#, options: .regularExpression) != nil {
             return .produce
         }
 
@@ -1434,7 +1442,9 @@ class LLMService: ObservableObject {
                 } else {
                     pluralPattern = base + "s?"
                 }
-                let pattern = "(?i)(?:^|[^a-z])" + pluralPattern + "(?:$|[^a-z])"
+                // Allow spaces/hyphens in multiword tokens (e.g., green onion(s))
+                let flexible = pluralPattern.replacingOccurrences(of: "\\\\s+", with: "[\\\\s-]+", options: .regularExpression)
+                let pattern = "(?i)(?:^|[^a-z])" + flexible + "(?:$|[^a-z])"
                 if let rx = try? NSRegularExpression(pattern: pattern),
                    rx.firstMatch(in: lowercasedName, options: [], range: NSRange(lowercasedName.startIndex..., in: lowercasedName)) != nil {
                     return category
@@ -1529,6 +1539,36 @@ class LLMService: ObservableObject {
         // TEMP DEBUG removed
         var cleanString = ingredientString.trimmingCharacters(in: .whitespacesAndNewlines)
         var isCannedOrJarredItem: Bool = false
+
+        // Toppings / garnish / for serving handling (no explicit measurement)
+        do {
+            let lower = cleanString.lowercased()
+            let isToppingsLike = lower.range(of: #"(?i)\b(toppings?|garnishes?|garnish|for\s+serving|to\s+serve)\b"#, options: .regularExpression) != nil
+            if isToppingsLike && !hasMeasurementPattern(cleanString) {
+                // Prefer example after "such as ..." if present; else strip leading marker tokens
+                var nameCandidate: String = {
+                    if let rx = try? NSRegularExpression(pattern: #"(?is)\bsuch\s+as\b\s*(.+)$"#) {
+                        let r = NSRange(cleanString.startIndex..., in: cleanString)
+                        if let m = rx.firstMatch(in: cleanString, options: [], range: r), m.numberOfRanges >= 2,
+                           let rr = Range(m.range(at: 1), in: cleanString) {
+                            return String(cleanString[rr])
+                        }
+                    }
+                    // Remove leading markers like "Toppings,", "Garnish:", etc.
+                    return cleanString.replacingOccurrences(of: #"(?i)^\s*(toppings?|garnishes?|garnish|for\s+serving|to\s+serve)[\s,:-]*"#, with: "", options: .regularExpression)
+                }()
+                // Strip parentheticals and trailing notes like "optional"
+                nameCandidate = nameCandidate
+                    .replacingOccurrences(of: #"\([^)]*\)"#, with: "", options: .regularExpression)
+                    .replacingOccurrences(of: #"(?i)\boptional\b"#, with: "", options: .regularExpression)
+                    .replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if nameCandidate.isEmpty { nameCandidate = "toppings" }
+                let cleanedName = cleanIngredientName(nameCandidate)
+                let category = determineCategory(cleanedName)
+                return Ingredient(name: cleanedName, amount: 0.0, unit: "For serving", category: category)
+            }
+        }
 
         // 🍋 Citrus normalization (quick parser): juice and zest
         do {
@@ -1693,7 +1733,7 @@ class LLMService: ObservableObject {
         if lower.range(of: #"\b(?:about\s+)?\d+\s+(minutes?|seconds?)\b"#, options: .regularExpression) != nil { return nil }
         
         // Try to extract amount and unit using regex (include full words to prevent leakage into name)
-        let pattern = #"(?i)(\d+[\d\/\s\.]*)\s*(cup|cups|teaspoon|teaspoons|tsp|tablespoon|tablespoons|tbsp|oz|ounce|ounces|pound|pounds|grams?|g(?![a-z])|ml|milliliter|milliliters|liter|liters|l(?![a-z])|clove|cloves|leaf|leaves|sprig|sprigs|piece|pieces|pinch|pinches|can|cans|jar|jars|bottle|bottles|package|packages|bag|bags|bunch|bunches|head|heads|slice|slices|small|medium|large|extra\s*large|xl)?\s*(.*)"#
+        let pattern = #"(?i)(\d+[\d\/\s\.]*)\s*(cup|cups|teaspoon|teaspoons|tsp|tablespoon|tablespoons|tbsp|oz|ounce|ounces|pound|pounds|grams?|g(?![a-z])|ml|milliliter|milliliters|liter|liters|l(?![a-z])|pint|pints|quart|quarts|gallon|gallons|servings?|serving|clove|cloves|leaf|leaves|sprig|sprigs|piece|pieces|pinch|pinches|can|cans|jar|jars|bottle|bottles|package|packages|bag|bags|bunch|bunches|head|heads|slice|slices|small|medium|large|extra\s*large|xl)?\s*(.*)"#
         
         guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
               let match = regex.firstMatch(in: cleanString, options: [], range: NSRange(cleanString.startIndex..., in: cleanString)),
@@ -2665,7 +2705,7 @@ class LLMService: ObservableObject {
         name = name.replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
         
         // 2) Remove leading amounts/units from name; keep them only in fields
-        let leadingUnitPattern = #"(?i)^(?:[\d¼½¾/\.\-]+\s+)?(cups?|tablespoons?|tbsp|teaspoons?|tsp|ounces?|oz|pounds?|lb|lbs|grams?|g|milliliters?|ml|liters?|l(?![a-z])|slices?|cloves?|pieces?|balls?|buns?)\b\s*"#
+        let leadingUnitPattern = #"(?i)^(?:[\d¼½¾/\.\-]+\s+)?(cups?|tablespoons?|tbsp|teaspoons?|tsp|ounces?|oz|pounds?|lb|lbs|grams?|g|milliliters?|ml|liters?|l(?![a-z])|pints?|quarts?|gallons?|servings?|slices?|cloves?|pieces?|balls?|buns?)\b\s*"#
         if let rx = try? NSRegularExpression(pattern: leadingUnitPattern) {
             let r = NSRange(name.startIndex..., in: name)
             if let m = rx.firstMatch(in: name, options: [], range: r), m.numberOfRanges >= 2,
