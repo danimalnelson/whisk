@@ -3150,6 +3150,43 @@ class LLMService: ObservableObject {
         let mergedStaples = mergeStapleQuantities(result)
         // Consolidate produce (allowlisted) to count-based pieces where safe
         let consolidatedProduce = consolidateProduceToPieces(mergedStaples)
+
+        // Post-pass: Fix orphaned citrus juice names using context from other ingredients in the same list
+        // e.g., ", plus more juice" or "fresh juice" → "lime juice" if limes/lime zest also appear
+        do {
+            let fruits = ["lime", "lemon", "orange", "grapefruit"]
+            let fruitPresence: Set<String> = {
+                var s = Set<String>()
+                for ing in consolidatedProduce {
+                    let ln = ing.name.lowercased()
+                    for f in fruits {
+                        if ln.range(of: #"(?i)\b\#(f)s?\b"#, options: .regularExpression) != nil { s.insert(f) }
+                    }
+                }
+                return s
+            }()
+            func isOrphanJuice(_ n: String) -> Bool {
+                let ln = n.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+                if ln == "juice" || ln == "fresh juice" { return true }
+                if ln.range(of: #"(?i)^(?:,\s*)?plus\s+more\s+juice(?:\s+as\s+needed)?$"#, options: .regularExpression) != nil { return true }
+                return false
+            }
+            if !fruitPresence.isEmpty {
+                var fixed: [Ingredient] = []
+                for ing in consolidatedProduce {
+                    if isOrphanJuice(ing.name) {
+                        // Prefer limes > lemons > oranges > grapefruit if multiple present
+                        let preferred = fruits.first(where: { fruitPresence.contains($0) }) ?? "citrus"
+                        let renamed = Ingredient(name: "\(preferred) juice", amount: ing.amount, unit: ing.unit, category: validateAndAdjustCategory("\(preferred) juice", originalCategory: ing.category))
+                        fixed.append(renamed)
+                    } else {
+                        fixed.append(ing)
+                    }
+                }
+                return fixed
+            }
+        }
+
         return consolidatedProduce
     }
 
@@ -3246,6 +3283,22 @@ class LLMService: ObservableObject {
     }
     // Consolidate allowlisted produce into count-based "pieces" by converting volume/weight where safe.
     private func consolidateProduceToPieces(_ ingredients: [Ingredient]) -> [Ingredient] {
+        // First, force whole-only rounding for specific peppers (scotch bonnet, habanero): any fraction < 1 → 1 piece
+        var preAdjusted: [Ingredient] = ingredients.map { ing in
+            var i = ing
+            if i.category == .produce {
+                let ln = i.name.lowercased()
+                let isTargetPepper = (ln.range(of: #"(?i)\b(scotch\s+bonnet|habanero)\s+pepper(s)?\b"#, options: .regularExpression) != nil)
+                let unitLower = i.unit.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                let unitIsPiece = unitLower.isEmpty || unitLower == "piece" || unitLower == "pieces"
+                if isTargetPepper && unitIsPiece && i.amount > 0.0 && i.amount < 1.0 {
+                    i.amount = 1.0
+                    i.unit = "piece"
+                }
+            }
+            return i
+        }
+
         struct ProduceSpec {
             let baseName: String
             let detectRegex: NSRegularExpression
@@ -3347,7 +3400,7 @@ class LLMService: ObservableObject {
         var accum: [String: Accum] = [:]
         var consumedIndices: Set<Int> = []
         // Iterate and collect
-        for (idx, ing) in ingredients.enumerated() {
+        for (idx, ing) in preAdjusted.enumerated() {
             // Skip non-Produce and skip zest/juice items
             let ln = ing.name.lowercased()
             if ln.range(of: #"(?i)\b(juice|zest)\b"#, options: .regularExpression) != nil { continue }
@@ -3362,6 +3415,9 @@ class LLMService: ObservableObject {
             var addPieces: Double = 0.0
             let unit = ing.unit.trimmingCharacters(in: .whitespacesAndNewlines)
             if isPieceUnit(unit) {
+                addPieces += ing.amount
+            } else if unit.isEmpty {
+                // Treat empty unit amounts as piece counts for matched specs
                 addPieces += ing.amount
             } else if let cups = volumeToCups(ing.amount, unit), let cpp = spec.cupsPerPiece, cpp > 0 {
                 addPieces += cups / cpp
@@ -3379,11 +3435,11 @@ class LLMService: ObservableObject {
             consumedIndices.insert(idx)
         }
 
-        if accum.isEmpty { return ingredients }
+        if accum.isEmpty { return preAdjusted }
 
         // Build output: keep all non-consumed ingredients; add consolidated per base
         var out: [Ingredient] = []
-        for (idx, ing) in ingredients.enumerated() {
+        for (idx, ing) in preAdjusted.enumerated() {
             if consumedIndices.contains(idx) { continue }
             out.append(ing)
         }
@@ -4376,6 +4432,18 @@ class LLMService: ObservableObject {
 			with: "$1",
 			options: .regularExpression
 		)
+
+        // Preserve leaf/leafs for bay specifically: ensure the word remains in the name
+        do {
+            let lc = cleanedName.lowercased().trimmingCharacters(in: .whitespaces)
+            if lc == "bay" {
+                cleanedName = "bay leaves"
+            } else if lc == "bay leaf" {
+                cleanedName = "bay leaf"
+            } else if lc == "bay leaves" {
+                cleanedName = "bay leaves"
+            }
+        }
 		// Herb plant-part descriptors: collapse variants like "leaves and tender stems" or "and stems" to base herb
 		do {
 			let herbAlternatives = #"(?:flat[ -]leaf\s+parsley|basil|parsley|cilantro|coriander|mint|sage|thyme|rosemary|dill|tarragon|oregano|chives|scallions?|green onion(?:s)?)"#
@@ -4552,6 +4620,23 @@ class LLMService: ObservableObject {
                     if cleanedName.range(of: #"(?i)\b\#(descriptor)\b"#, options: String.CompareOptions.regularExpression) == nil {
                         cleanedName = descriptor + " " + cleanedName
                     }
+                }
+            }
+        }
+
+        // Fix orphaned citrus juice phrases like ", plus more juice" → proper "lime juice"/"lemon juice" etc., using context from original text
+        do {
+            let lcOriginal = name.lowercased()
+            let lcClean = cleanedName.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+            let orphanJuice = (lcClean.range(of: #"(?i)^(?:,\s*)?plus\s+more\s+juice(?:\s+as\s+needed)?$"#, options: .regularExpression) != nil)
+                || (lcClean == "juice")
+                || (lcClean == "fresh juice")
+            if orphanJuice {
+                let fruits = ["lime", "lemon", "orange", "grapefruit"]
+                if let fruit = fruits.first(where: { f in lcOriginal.range(of: #"(?i)\b\#(f)s?\b"#, options: .regularExpression) != nil }) {
+                    cleanedName = "\(fruit) juice"
+                } else {
+                    cleanedName = "citrus juice"
                 }
             }
         }
@@ -5911,6 +5996,12 @@ class LLMService: ObservableObject {
         // Produce explicit
         ("pineapple", .produce),
 
+        // Produce: specific peppers to avoid beverage 'scotch' collision
+        ("scotch bonnet", .produce),
+        ("scotch bonnet pepper", .produce),
+        ("habanero", .produce),
+        ("habanero pepper", .produce),
+
         // Pantry: gelatin / dessert mixes
         ("jell-o", .pantry),
         ("jello", .pantry),
@@ -5972,7 +6063,8 @@ class LLMService: ObservableObject {
             ("whiskey", .beverages),
             ("whisky", .beverages),
             ("bourbon", .beverages),
-            ("scotch", .beverages),
+            ("scotch whisky", .beverages),
+            ("scotch whiskey", .beverages),
             ("brandy", .beverages),
             ("cognac", .beverages),
             ("liqueur", .beverages),
