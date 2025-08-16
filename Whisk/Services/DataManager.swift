@@ -241,6 +241,21 @@ class DataManager: ObservableObject {
             let garlicEquivalent = isGarlicName(existingName) && isGarlicName(newName)
             if !namesEqual && !garlicEquivalent { continue }
 
+            // Treat range-like and count-like mixtures as consolidatable (actual merge logic handled in consolidateAmounts)
+            let isRangeLike: (String) -> Bool = { u in
+                let t = u.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                if t.hasPrefix("to ") { return true }
+                if let rx = try? NSRegularExpression(pattern: "(?i)^([\\d\\.]+)\\s*[-–]\\s*([\\d\\.]+)(?:\\s+[a-z]+)?$") {
+                    return rx.firstMatch(in: t, options: [], range: NSRange(t.startIndex..., in: t)) != nil
+                }
+                return false
+            }
+            let countLikeMix = (isCountUnit(existingUnit) || isRangeLike(existingUnit)) || (isCountUnit(newUnit) || isRangeLike(newUnit))
+            if countLikeMix {
+                print("🔎 Consolidation match (count/range): \(existing.name) [\(existingUnit)]  +  \(newIngredient.name) [\(newUnit)]")
+                return index
+            }
+
             // Unify zero-like items (e.g., "To taste" / "For serving")
             if isZeroLikeUnit(existingUnit) || isZeroLikeUnit(newUnit) {
                 print("🔎 Consolidation match (zero-like): \(existing.name) [\(existingUnit)]  +  \(newIngredient.name) [\(newUnit)]")
@@ -297,6 +312,31 @@ class DataManager: ObservableObject {
         let u1 = existingUnit.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         let u2 = newUnit.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
 
+        // Helper: parse range-like units (e.g., "to 15 cloves", "12-15") into [min,max] with base unit
+        func parseRange(amount: Double, unit: String, fallbackBase: String) -> (min: Double, max: Double, base: String) {
+            let trimmed = unit.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            // Pattern: "to X [base]"
+            if let rx = try? NSRegularExpression(pattern: "(?i)^to\\s+([\\d\\.]+)(?:\\s+([a-z]+))?$"),
+               let m = rx.firstMatch(in: trimmed, options: [], range: NSRange(trimmed.startIndex..., in: trimmed)),
+               m.numberOfRanges >= 2 {
+                let maxStr = (Range(m.range(at: 1), in: trimmed)).map { String(trimmed[$0]) } ?? "0"
+                let maxVal = Double(maxStr) ?? amount
+                let base = (Range(m.range(at: 2), in: trimmed)).map { String(trimmed[$0]) } ?? fallbackBase
+                return (min: amount, max: maxVal, base: base.isEmpty ? fallbackBase : base)
+            }
+            // Pattern: "min-max" (legacy)
+            if let rx = try? NSRegularExpression(pattern: "(?i)^([\\d\\.]+)\\s*[-–]\\s*([\\d\\.]+)$"),
+               let m = rx.firstMatch(in: trimmed, options: [], range: NSRange(trimmed.startIndex..., in: trimmed)),
+               m.numberOfRanges >= 3 {
+                let minStr = (Range(m.range(at: 1), in: trimmed)).map { String(trimmed[$0]) } ?? String(amount)
+                let maxStr = (Range(m.range(at: 2), in: trimmed)).map { String(trimmed[$0]) } ?? minStr
+                let minVal = Double(minStr) ?? amount
+                let maxVal = Double(maxStr) ?? minVal
+                return (min: minVal, max: maxVal, base: fallbackBase)
+            }
+            return (min: amount, max: amount, base: fallbackBase)
+        }
+
         // Zero-like units (e.g., "To taste" / "For serving"): treat as amount 0.
         let u1Zero = isZeroLikeUnit(u1)
         let u2Zero = isZeroLikeUnit(u2)
@@ -309,6 +349,51 @@ class DataManager: ObservableObject {
         } else if !u1Zero && u2Zero {
             // Existing is measured, new is zero-like → keep measured
             return (existing, existingUnit)
+        }
+
+        // Count-like consolidation with range support (sums ranges element-wise)
+        do {
+            // Determine if this is a count-like scenario
+            let base1: String = isCountUnit(u1) ? u1 : (u1.hasPrefix("to ") ? "pieces" : u1)
+            let base2: String = isCountUnit(u2) ? u2 : (u2.hasPrefix("to ") ? "pieces" : u2)
+            // Normalize garlic base to cloves
+            let isGarlic = ingredientName.lowercased().contains("garlic")
+            let normalizedBase1 = isGarlic ? (base1.isEmpty || base1 == "pieces" ? "cloves" : base1) : base1
+            let normalizedBase2 = isGarlic ? (base2.isEmpty || base2 == "pieces" ? "cloves" : base2) : base2
+
+            let countLike1 = isCountUnit(normalizedBase1) || u1.hasPrefix("to ")
+            let countLike2 = isCountUnit(normalizedBase2) || u2.hasPrefix("to ")
+            if countLike1 && countLike2 {
+                var r1 = parseRange(amount: existing, unit: u1, fallbackBase: normalizedBase1.isEmpty ? "pieces" : normalizedBase1)
+                var r2 = parseRange(amount: new, unit: u2, fallbackBase: normalizedBase2.isEmpty ? "pieces" : normalizedBase2)
+                // If garlic and one side is volume, convert to cloves (heuristic: 1 clove ≈ 1 tsp; 1 tbsp = 3 tsp)
+                let volToCloves: (Double, String) -> Double? = { amt, unit in
+                    switch unit {
+                    case "teaspoon", "teaspoons", "tsp": return amt
+                    case "tablespoon", "tablespoons", "tbsp": return amt * 3.0
+                    default: return nil
+                    }
+                }
+                if isGarlic {
+                    if isVolumeUnit(u1), let cloves = volToCloves(existing, u1) {
+                        r1 = (min: cloves, max: cloves, base: "cloves")
+                    }
+                    if isVolumeUnit(u2), let cloves = volToCloves(new, u2) {
+                        r2 = (min: cloves, max: cloves, base: "cloves")
+                    }
+                }
+                // Require same base or allow empty → pick non-empty
+                let base = r1.base.isEmpty ? r2.base : (r2.base.isEmpty ? r1.base : r1.base)
+                let sumMin = r1.min + r2.min
+                let sumMax = r1.max + r2.max
+                if abs(sumMin - sumMax) < 1e-6 {
+                    return (sumMin, base)
+                } else {
+                    // Represent as "min to max [base]" (omit base when not helpful)
+                    let unitText = base.isEmpty ? String(format: "to %.0f", sumMax) : String(format: "to %.0f %@", sumMax, base)
+                    return (sumMin, unitText)
+                }
+            }
         }
 
         // Same unit → simple addition
