@@ -30,7 +30,7 @@ struct WhiskTests {
         }
         """
         
-        let recipe = llmService.parseStructuredData(jsonLD, originalURL: "https://test.com")
+        let recipe = await llmService.parseStructuredData(jsonLD, originalURL: "https://test.com")
         
         #expect(recipe != nil)
         #expect(recipe?.name == "Test Recipe")
@@ -52,7 +52,7 @@ struct WhiskTests {
         2 tablespoons butter
         """
         
-        let ingredients = llmService.parseIngredientsWithRegex(ingredientContent)
+        let ingredients = await llmService.parseIngredientsWithRegex(ingredientContent)
         
         #expect(ingredients != nil)
         #expect(ingredients?.count == 5)

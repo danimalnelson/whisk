@@ -120,7 +120,15 @@ class LLMService: ObservableObject {
 
     // MARK: - Category keyword hints (broad heuristics; overrides take precedence)
     private let categoryKeywords: [GroceryCategory: [String]] = [
-        .produce: ["apple", "banana", "lemon", "lime", "orange", "grapefruit", "lettuce", "onion", "garlic", "tomato", "pepper", "cucumber", "spinach", "kale", "zest", "juice", "parsley", "mint", "chives", "basil", "cilantro"],
+        .produce: [
+            "apple", "banana", "lemon", "lime", "orange", "grapefruit",
+            "lettuce", "onion", "garlic", "tomato", "pepper", "cucumber",
+            "spinach", "kale", "zest", "juice", "parsley", "mint", "chives",
+            "basil", "cilantro", "shallot",
+            // Roots and tubers
+            "carrot", "carrots", "potato", "potatoes", "sweet potato", "sweet potatoes",
+            "yam", "yams", "yukon gold", "russet"
+        ],
         .meatAndSeafood: ["beef", "pork", "chicken", "shrimp", "salmon", "tuna", "squid", "crab"],
         .deli: ["ham", "salami", "prosciutto", "nduja", "'nduja"],
         .bakery: ["bread", "baguette", "bun"],
@@ -184,7 +192,9 @@ class LLMService: ObservableObject {
         do {
             let html = webpageContent
             let listPatterns = [#"<ul[^>]*>([\s\S]*?)</ul>"#, #"<ol[^>]*>([\s\S]*?)</ol>"#]
-            var bestItems: [String] = []
+            var collectedItems: [String] = []
+            var acceptedGroupCount = 0
+            var extractedListItemCount = 0
             for pattern in listPatterns {
                 if let rx = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) {
                     let matches = rx.matches(in: html, options: [], range: NSRange(html.startIndex..., in: html))
@@ -193,11 +203,15 @@ class LLMService: ObservableObject {
                         // proximity check
                         let fullRange = m.range(at: 0)
                         var isNearIngredients = false
+                        var isServingSuggestions = false
+                        var isForTheSection = false
                         if let fr = Range(fullRange, in: html) {
                             let preEnd = fr.lowerBound
-                            let preStart = html.index(preEnd, offsetBy: -1500, limitedBy: html.startIndex) ?? html.startIndex
+                            let preStart = html.index(preEnd, offsetBy: -1800, limitedBy: html.startIndex) ?? html.startIndex
                             let pre = html[preStart..<preEnd].lowercased()
                             if pre.contains("ingredients") || pre.contains("ingredient") { isNearIngredients = true }
+                            if pre.contains("for the ") { isForTheSection = true }
+                            if pre.contains("serving suggestion") || pre.contains("serving suggestions") { isServingSuggestions = true }
                         }
                         // extract <li>
                         let listContent = String(html[inner])
@@ -222,22 +236,31 @@ class LLMService: ObservableObject {
                                     let hasCount = (countRx?.firstMatch(in: i, options: [], range: NSRange(i.startIndex..., in: i)) != nil)
                                     if hasMeasurementPattern(i) || hasCount { withMeasureOrCount += 1 }
                                 }
-                                // Accept lists near an Ingredients heading.
+                                // Accept lists near an Ingredients heading OR a "For the ..." group,
+                                // but exclude obvious serving suggestion lists
                                 // For small lists (<= 3 items), require that ALL items look like ingredients.
                                 // For larger lists, require that at least half (and at least 3) look like ingredients.
                                 let acceptSmallList = items.count <= 3 && withMeasureOrCount >= items.count
                                 let acceptLargeList = withMeasureOrCount >= max(3, Int(Double(items.count) * 0.5))
-                                let accept = isNearIngredients && (acceptSmallList || acceptLargeList)
-                                if accept && items.count > bestItems.count { bestItems = items }
+                                let proximityOK = isNearIngredients || isForTheSection
+                                let accept = proximityOK && !isServingSuggestions && (acceptSmallList || acceptLargeList)
+                                if accept {
+                                    collectedItems.append(contentsOf: items)
+                                    acceptedGroupCount += 1
+                                    extractedListItemCount += items.count
+                                }
                             }
                         }
                     }
                 }
             }
-            if !bestItems.isEmpty {
-                ingredientSection = bestItems.joined(separator: "\n")
-                print("📋 Using HTML list ingredients (\(bestItems.count) items)")
+            if !collectedItems.isEmpty {
+                ingredientSection = collectedItems.joined(separator: "\n")
+                print("📋 Using HTML list ingredients (\(acceptedGroupCount) groups, \(collectedItems.count) items)")
             }
+            // Attach heuristic counts to help decide whether to skip LLM later
+            // Encode as markers at end of ingredientSection for internal use (safe since we filter non-ingredient lines later)
+            ingredientSection += "\n__EXTRACTED_GROUPS=\(acceptedGroupCount)__\n__EXTRACTED_ITEMS=\(extractedListItemCount)__"
         }
 
         // 🚀 QUICK PATH: Parse each line individually (robust against formatting) before regex/LLM
@@ -247,6 +270,7 @@ class LLMService: ObservableObject {
             .filter { line in
                 guard !line.isEmpty else { return false }
                 let lower = line.lowercased()
+                if lower.hasPrefix("__extracted_groups=") || lower.hasPrefix("__extracted_items=") { return false }
                 // HTML/DOM tokens should never be considered ingredients
                 if lower.range(of: #"[<>]"#, options: .regularExpression) != nil { return false }
                 if lower.range(of: #"</?\w+[\s>]|href=|src=|<script|</script|<style|</style|<!doctype|<meta|<link"#, options: .regularExpression) != nil { return false }
@@ -295,6 +319,21 @@ class LLMService: ObservableObject {
 
         // Short-list optimization: for small ingredient sets, prefer quick path and augment with regex coverage
         if quickIngredients.count > 0 && quickIngredients.count <= 12 {
+            // Recover extracted counts embedded earlier
+            var extractedGroups = 0
+            var extractedItems = 0
+            do {
+                let markerLines = ingredientSection.components(separatedBy: .newlines)
+                for ml in markerLines {
+                    if ml.lowercased().hasPrefix("__extracted_groups=") {
+                        let v = ml.split(separator: "=").last.map(String.init) ?? "0"
+                        extractedGroups = Int(v) ?? 0
+                    } else if ml.lowercased().hasPrefix("__extracted_items=") {
+                        let v = ml.split(separator: "=").last.map(String.init) ?? "0"
+                        extractedItems = Int(v) ?? 0
+                    }
+                }
+            }
             print("✅ Small recipe (\(quickIngredients.count) items) via quick parser - skipping LLM call!")
             var merged = quickIngredients
             if let regexAugment = await parseIngredientsWithRegex(ingredientSection) {
@@ -313,18 +352,29 @@ class LLMService: ObservableObject {
                     if !existingKeys.contains(key) { merged.append(ing) }
                 }
             }
-            performanceStats.recordRegexSuccess()
-            var recipe = Recipe(url: url)
-            recipe.ingredients = sanitizeIngredientList(merged)
-            recipe.isParsed = true
-            recipe.name = extractRecipeTitle(from: webpageContent)
-            let result = RecipeParsingResult(recipe: recipe, success: true, error: nil)
-            cacheResult(result, for: url)
-            let totalTime = CFAbsoluteTimeGetCurrent() - totalStartTime
-            print("⏱️ Total time (quick small): \(String(format: "%.2f", totalTime))s")
-            print("⏱️ === Recipe Parsing End ===")
-            performanceStats.printStats()
-            return result
+            // Decide whether coverage is sufficient to skip LLM; require decent coverage of extracted list items
+            let coverageOK: Bool = {
+                if extractedItems >= 4 {
+                    return merged.count >= max(4, Int(Double(extractedItems) * 0.6))
+                }
+                // If we couldn't estimate, require at least 6 items to be safe
+                return merged.count >= 6
+            }()
+            if coverageOK {
+                performanceStats.recordRegexSuccess()
+                var recipe = Recipe(url: url)
+                recipe.ingredients = sanitizeIngredientList(merged)
+                recipe.isParsed = true
+                recipe.name = extractRecipeTitle(from: webpageContent)
+                let result = RecipeParsingResult(recipe: recipe, success: true, error: nil)
+                cacheResult(result, for: url)
+                let totalTime = CFAbsoluteTimeGetCurrent() - totalStartTime
+                print("⏱️ Total time (quick small): \(String(format: "%.2f", totalTime))s")
+                print("⏱️ === Recipe Parsing End ===")
+                performanceStats.printStats()
+                return result
+            }
+            print("⚠️ Small quick parse produced insufficient coverage (\(merged.count)/\(max(extractedItems, 0))). Proceeding to LLM.")
         }
 
         // 🚀 NEW: Try regex-based parsing as deterministic fallback (fast, no LLM cost)
@@ -470,21 +520,42 @@ class LLMService: ObservableObject {
                 return nil
             }
             
-            let json = try JSONSerialization.jsonObject(with: jsonData) as? [String: Any]
-            guard let json = json else {
-                print("❌ Failed to parse JSON")
-                return nil
+            let root = try JSONSerialization.jsonObject(with: jsonData)
+            
+            // Helper to test if a value's @type contains Recipe
+            func isRecipeType(_ value: Any?) -> Bool {
+                if let s = value as? String { return s.lowercased() == "recipe" }
+                if let arr = value as? [Any] {
+                    return arr.contains { v in
+                        if let s = v as? String { return s.lowercased() == "recipe" }
+                        return false
+                    }
+                }
+                return false
             }
             
-            // Handle both single recipe and array of recipes
+            // Handle single object, arrays, and @graph containers
             var recipeData: [String: Any]?
-            if let recipes = json["@graph"] as? [[String: Any]] {
-                // Find the recipe object in the graph
-                recipeData = recipes.first { recipe in
-                    recipe["@type"] as? String == "Recipe"
+            if let dict = root as? [String: Any] {
+                if isRecipeType(dict["@type"]) {
+                    recipeData = dict
+                } else if let graph = dict["@graph"] as? [[String: Any]] {
+                    recipeData = graph.first(where: { isRecipeType($0["@type"]) })
                 }
-            } else if json["@type"] as? String == "Recipe" {
-                recipeData = json
+            } else if let array = root as? [[String: Any]] {
+                // Top-level array of LD objects
+                if let direct = array.first(where: { isRecipeType($0["@type"]) }) {
+                    recipeData = direct
+                } else {
+                    // Look inside any @graph members too
+                    for obj in array {
+                        if let graph = obj["@graph"] as? [[String: Any]],
+                           let found = graph.first(where: { isRecipeType($0["@type"]) }) {
+                            recipeData = found
+                            break
+                        }
+                    }
+                }
             }
             
             guard let recipeData = recipeData else {
@@ -520,6 +591,9 @@ class LLMService: ObservableObject {
                             }
                         }
                         break
+                    } else if let single = fieldData as? String {
+                        ingredientList.append(single)
+                        break
                     }
                 }
             }
@@ -534,7 +608,9 @@ class LLMService: ObservableObject {
             }
             
             if ingredients.count >= 3 {
-                recipe.ingredients = ingredients
+                // Always sanitize and normalize structured-data ingredients
+                let sanitized = sanitizeIngredientList(ingredients)
+                recipe.ingredients = sanitized
                 recipe.isParsed = true
                 print("✅ Successfully parsed \(ingredients.count) ingredients from structured data")
                 return recipe
@@ -814,11 +890,13 @@ class LLMService: ObservableObject {
                             unit = "piece"
                         }
 
-                        // If we salvaged an herb, normalize unit to leaves/sprigs when appropriate
+                        // If name is a herb AND there is NO explicit measurement unit, prefer leaves/sprigs.
+                        // Do not override an existing parsed volume/weight unit like tablespoons/cups/etc.
                         do {
                             let rawLower = trimmedLine.lowercased()
                             let isHerb = ["basil","mint","parsley","cilantro","coriander","tarragon","dill","thyme","rosemary","sage","oregano","chives"].contains(where: { cleanName.lowercased() == $0 })
-                            if isHerb {
+                            let hasExplicitMeasure = !unit.isEmpty && !["piece","pieces"].contains(unit.lowercased()) && unit.range(of: #"(?i)^(cups?|tablespoons?|tbsp|teaspoons?|tsp|ounces?|oz|pounds?|lb|lbs|grams?|g|kilograms?|kg|milliliters?|ml|liters?|l)$"#, options: .regularExpression) != nil
+                            if isHerb && !hasExplicitMeasure {
                                 if rawLower.range(of: #"(?i)\bsprigs?\b"#, options: .regularExpression) != nil {
                                     unit = "sprigs"
                                 } else {
@@ -1317,14 +1395,19 @@ class LLMService: ObservableObject {
     // 🚀 NEW: Determine ingredient category from name
     private func determineCategory(_ name: String) -> GroceryCategory {
         let lowercasedName = name.lowercased()
-        
-        // Check category overrides first
+
+        // Prefer Produce for fresh roots/spices, peppers, onions, carrots, potatoes (handle plural forms)
+        if lowercasedName.range(of: #"(?i)\b(ginger|scotch\s+bonnet|habanero|jalapeño|jalapeno|bell\s+peppers?|peppers?|onions?|shallots?|carrots?|potatoes?|yukon\s+gold|russet)\b"#, options: .regularExpression) != nil {
+            return .produce
+        }
+
+        // Check category overrides (spirits, stocks, etc.) with simple containment
         for (keyword, category) in categoryOverrides {
             if lowercasedName.contains(keyword) {
                 return category
             }
         }
-        
+
         // Check category keywords (force 'frozen' to Frozen category first),
         // only when 'frozen' refers to the ingredient state, not a product name like "frozen yogurt".
         if lowercasedName.contains("frozen") {
@@ -1336,10 +1419,24 @@ class LLMService: ObservableObject {
         }
         
         // Check category keywords
-        let categoryKeywords = self.categoryKeywords
-        for (category, keywords) in categoryKeywords {
+        // Keyword classification using whole-word-ish matching to avoid substring collisions (e.g., 'gin' in 'ginger')
+        for (category, keywords) in self.categoryKeywords {
             for keyword in keywords {
-                if lowercasedName.contains(keyword) {
+                // Allow plural variants for common produce words to avoid falling back to pantry
+                let base = NSRegularExpression.escapedPattern(for: keyword)
+                let pluralPattern: String
+                if keyword.hasSuffix("o") { // tomato → tomatoes
+                    pluralPattern = base + "(?:es)?"
+                } else if keyword.hasSuffix("y") { // celery → celery (no change); berry → berries
+                    pluralPattern = base.replacingOccurrences(of: "y$", with: "(?:y|ies)", options: .regularExpression)
+                } else if keyword.hasSuffix("s") { // already plural included
+                    pluralPattern = base
+                } else {
+                    pluralPattern = base + "s?"
+                }
+                let pattern = "(?i)(?:^|[^a-z])" + pluralPattern + "(?:$|[^a-z])"
+                if let rx = try? NSRegularExpression(pattern: pattern),
+                   rx.firstMatch(in: lowercasedName, options: [], range: NSRange(lowercasedName.startIndex..., in: lowercasedName)) != nil {
                     return category
                 }
             }
@@ -1769,7 +1866,7 @@ class LLMService: ObservableObject {
                         if let mm = rx.firstMatch(in: sizeText, options: [], range: r), mm.numberOfRanges >= 3,
                            let nr = Range(mm.range(at: 1), in: sizeText) {
                             let num = String(sizeText[nr])
-                            sizeText = "\(num)-ounce"
+                            sizeText = "\(num) ounce"
                         }
                     }
                     // Fallbacks for grams and milliliters if present
@@ -1779,7 +1876,7 @@ class LLMService: ObservableObject {
                             if let mm = rx.firstMatch(in: sizeText, options: [], range: r), mm.numberOfRanges >= 3,
                                let nr = Range(mm.range(at: 1), in: sizeText) {
                                 let num = String(sizeText[nr])
-                                sizeText = "\(num)-gram"
+                                sizeText = "\(num) gram"
                             }
                         }
                     }
@@ -1789,7 +1886,7 @@ class LLMService: ObservableObject {
                             if let mm = rx.firstMatch(in: sizeText, options: [], range: r), mm.numberOfRanges >= 3,
                                let nr = Range(mm.range(at: 1), in: sizeText) {
                                 let num = String(sizeText[nr])
-                                sizeText = "\(num)-milliliter"
+                                sizeText = "\(num) milliliter"
                             }
                         }
                     }
@@ -1811,6 +1908,12 @@ class LLMService: ObservableObject {
                 }
             }
         }
+        // If we have no explicit measure but we do have a captured container size (e.g., 13.5 ounce can),
+        // prefer that as the unit; ensure pluralization for amounts > 1 occurs later.
+        if unit.isEmpty || unit.lowercased() == "piece" || unit.lowercased() == "pieces" {
+            // nothing else needed; container handling above already set size when present
+        }
+
         // Normalize patterns like "4 small pinches of Espelette pepper" → unit: pinches, name: Espelette pepper
         do {
             let unitLower = unit.lowercased()
@@ -2550,6 +2653,15 @@ class LLMService: ObservableObject {
         name = name.replacingOccurrences(of: #"\s*\([^)]*\)\s*"#, with: " ", options: .regularExpression)
         // Remove unmatched trailing parenthesis fragments (e.g., "name ( 6 ounces" → "name")
         name = name.replacingOccurrences(of: #"\s*\([^)]*$"#, with: " ", options: .regularExpression)
+        // Remove leftover inline note tokens outside parentheses (e.g., "; see notes)")
+        name = name.replacingOccurrences(of: #"(?i)\s*;\s*see\s+notes\)?\s*$"#, with: "", options: .regularExpression)
+        // Remove acquisition/source clauses like "from 1 (13.5-ounce) can", "from one 13.5-ounce can", "from one jar", etc.
+        // Allow parenthetical or hyphenated size specs between the count and container word.
+        name = name.replacingOccurrences(of: #"(?is)\s*\bfrom\b\s+(?:\d+(?:\.\d+)?|one|two|three|a|an)\s+(?:(?:\(?\d+(?:\.\d+)?\s*(?:ounce|oz|gram|g|milliliter|ml)\)?|\d+(?:\.\d+)?-?(?:ounce|oz|gram|g|milliliter|ml))\s*)?(?:can|cans|jar|jars|bottle|bottles|package|packages|container|containers)\b[^,;]*"#, with: "", options: .regularExpression)
+        // Remove trailing usage qualifiers in the name like "plus more if needed", "plus more", "as needed", "to taste"
+        name = name.replacingOccurrences(of: #"(?i)\s*(?:,\s*)?(?:plus\s+more(?:\s+if\s+needed)?|as\s+needed|to\s+taste)\s*$"#, with: "", options: .regularExpression)
+        // Strip stray trailing punctuation leftover after removals
+        name = name.replacingOccurrences(of: #"[\s;:,\)\.]+$"#, with: "", options: .regularExpression)
         name = name.replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
         
         // 2) Remove leading amounts/units from name; keep them only in fields
