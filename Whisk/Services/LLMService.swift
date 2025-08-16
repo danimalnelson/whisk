@@ -117,7 +117,9 @@ class LLMService: ObservableObject {
         "piece": "pieces", "pieces": "pieces",
         "leaf": "leaves", "leaves": "leaves",
         "sprig": "sprigs", "sprigs": "sprigs",
-        "ear": "ears", "ears": "ears"
+        "ear": "ears", "ears": "ears",
+        // Micro-volume / droplet
+        "drop": "drops", "drops": "drops"
     ]
 
     // MARK: - Category keyword hints (broad heuristics; overrides take precedence)
@@ -665,7 +667,8 @@ class LLMService: ObservableObject {
         
         // Pattern A: measurement-based (amount + optional parenthetical size + unit + name). Includes containers and size units.
         // Use a non-capturing group for the parenthetical so capture indices remain stable.
-        let ingredientPattern = #"(?i)^\s*(\d+[\d\/\s\.]*)\s*(?:\([^)]*\)\s*)?(cups?|tablespoons?|tbsp|teaspoons?|tsp|ounces?|oz|pounds?|lb|lbs|grams?|g(?![a-z])|kg|milliliters?|ml|liters?|l(?![a-z])|pint|pints|quart|quarts|gallon|gallons|small|medium|large|extra\s*large|xl|cloves?|sprigs?|bunches?|heads?|leaves?|pieces?|cans?|jars?|bottles?|containers?|packages?|bags?)\s+([^,\.]+?)(?:\s*,\s*[^,]*)?$"#
+        // Allow optional measurement qualifiers (e.g., "packed", "firmly packed", "heaping", "scant", etc.) between amount and unit
+        let ingredientPattern = #"(?i)^\s*(\d+[\d\/\s\.]*)\s*(?:\([^)]*\)\s*)?(?:(?:firmly\s+packed|loosely\s+packed|lightly\s+packed|tightly\s+packed|well\s+packed|packed|heaping|scant|rounded|level|generous)\s+)?(cups?|tablespoons?|tbsp|teaspoons?|tsp|ounces?|oz|pounds?|lb|lbs|grams?|g(?![a-z])|kg|milliliters?|ml|liters?|l(?![a-z])|pint|pints|quart|quarts|gallon|gallons|small|medium|large|extra\s*large|xl|cloves?|sprigs?|bunches?|heads?|leaves?|pieces?|drops?|cans?|jars?|bottles?|containers?|packages?|bags?)\s+([^,\.]+?)(?:\s*,\s*[^,]*)?$"#
         // Pattern B: count-based (amount + name without explicit unit): e.g., "8 scallions", "3 star anise", "1 cinnamon stick"
         let countPattern = #"(?i)^(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|a|an|\d+[\d\/\s\.]*)\s+([^,\.]+?)(?:\s*\([^)]*\))?(?:\s*,\s*[^,]*)?$"#
         
@@ -1412,7 +1415,7 @@ class LLMService: ObservableObject {
 
         // Only split on additive connectors ("plus"/"and") when a new measurement or serving wedge follows
         let piece = normalized
-        let pattern = "(?i)\\b(?:plus|and)\\b\\s+(?=(?:\\d|one|two|three|four|five|six|seven|eight|nine|a|an)\\b|(?:teaspoons?|tsp|tablespoons?|tbsp|cups?|ounces?|oz|milliliters?|ml|liters?|l)\\b|lime\\s+wedges?\\b|lemon\\s+wedges?\\b)"
+        let pattern = "(?i)\\b(?:plus|and)\\b\\s+(?=(?:\\d|one|two|three|four|five|six|seven|eight|nine|a|an)\\b|(?:teaspoons?|tsp|tablespoons?|tbsp|cups?|ounces?|oz|milliliters?|ml|liters?|l|drops?)\\b|lime\\s+wedges?\\b|lemon\\s+wedges?\\b)"
         if let rx = try? NSRegularExpression(pattern: pattern),
            rx.firstMatch(in: piece, options: [], range: NSRange(piece.startIndex..., in: piece)) != nil {
             let marked = rx.stringByReplacingMatches(in: piece, options: [], range: NSRange(piece.startIndex..., in: piece), withTemplate: "||| ")
@@ -1988,7 +1991,8 @@ class LLMService: ObservableObject {
         if lower.range(of: #"\b(?:about\s+)?\d+\s+(minutes?|seconds?)\b"#, options: .regularExpression) != nil { return nil }
         
         // Try to extract amount and unit using regex (include full words to prevent leakage into name)
-        let pattern = #"(?i)(\d+[\d\/\s\.]*)\s*(cup|cups|teaspoon|teaspoons|tsp|tablespoon|tablespoons|tbsp|oz|ounce|ounces|pound|pounds|grams?|g(?![a-z])|ml|milliliter|milliliters|liter|liters|l(?![a-z])|pint|pints|quart|quarts|gallon|gallons|servings?|serving|clove|cloves|leaf|leaves|sprig|sprigs|ear|ears|piece|pieces|pinch|pinches|can|cans|jar|jars|bottle|bottles|package|packages|bag|bags|bunch|bunches|head|heads|slice|slices|small|medium|large|extra\s*large|xl)?\s*(.*)"#
+        // Accept optional qualifiers after amount and before unit
+        let pattern = #"(?i)(\d+[\d\/\s\.]*)\s*(?:(?:firmly\s+packed|loosely\s+packed|lightly\s+packed|tightly\s+packed|well\s+packed|packed|heaping|scant|rounded|level|generous)\s+)?(cup|cups|teaspoon|teaspoons|tsp|tablespoon|tablespoons|tbsp|oz|ounce|ounces|pound|pounds|grams?|g(?![a-z])|ml|milliliter|milliliters|liter|liters|l(?![a-z])|pint|pints|quart|quarts|gallon|gallons|servings?|serving|clove|cloves|leaf|leaves|sprig|sprigs|ear|ears|piece|pieces|pinch|pinches|drop|drops|can|cans|jar|jars|bottle|bottles|package|packages|bag|bags|bunch|bunches|head|heads|slice|slices|small|medium|large|extra\s*large|xl)?\s*(.*)"#
         
         guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
               let match = regex.firstMatch(in: cleanString, options: [], range: NSRange(cleanString.startIndex..., in: cleanString)),
@@ -2256,7 +2260,7 @@ class LLMService: ObservableObject {
         var cleanName = cleanIngredientName(rawName)
         // If the parsed unit is empty but the name starts with a unit word, move it to unit
         if unit.isEmpty {
-            if let m = try? NSRegularExpression(pattern: #"(?i)^(cup|cups|teaspoon|teaspoons|tsp|tablespoon|tablespoons|tbsp|oz|ounce|ounces|pound|pounds|grams?|g(?![a-z])|ml|milliliter|milliliters|liter|liters|l|clove|cloves|piece|pieces|can|cans|jar|jars|bottle|bottles|package|packages|bag|bags|bunch|bunches|head|heads|slice|slices)(?![a-z])\b"#)
+            if let m = try? NSRegularExpression(pattern: #"(?i)^(cup|cups|teaspoon|teaspoons|tsp|tablespoon|tablespoons|tbsp|oz|ounce|ounces|pound|pounds|grams?|g(?![a-z])|ml|milliliter|milliliters|liter|liters|l|clove|cloves|piece|pieces|drop|drops|can|cans|jar|jars|bottle|bottles|package|packages|bag|bags|bunch|bunches|head|heads|slice|slices)(?![a-z])\b"#)
                 .firstMatch(in: cleanName, options: [], range: NSRange(cleanName.startIndex..., in: cleanName)),
                m.numberOfRanges >= 2,
                let r = Range(m.range(at: 1), in: cleanName) {
@@ -3045,10 +3049,101 @@ class LLMService: ObservableObject {
             let finalSanitized = Ingredient(name: sanitized.name, amount: sanitized.amount, unit: sanitized.unit, category: enforcedCategory)
             result.append(finalSanitized)
         }
-        return result
+        // Merge cross-unit duplicates for select staples (e.g., salt, granulated sugar)
+        return mergeStapleQuantities(result)
     }
 
     // Removed post-LLM 'for serving' attachment to avoid duplication; handled centrally in processAndStandardizeIngredient
+    
+    // Merge quantities for staple ingredients across units into grams to avoid duplicates
+    private func mergeStapleQuantities(_ ingredients: [Ingredient]) -> [Ingredient] {
+        // Names to merge and their unit → gram conversion maps
+        struct StapleSpec {
+            let nameTest: (String) -> Bool
+            let unitToGrams: (String) -> Double?
+            let defaultCategory: GroceryCategory
+        }
+        // Helper canonical conversions
+        func gramsPerForSalt(unit: String) -> Double? {
+            switch unit.lowercased() {
+            case "grams": return 1.0
+            case "g": return 1.0
+            case "teaspoon", "teaspoons", "tsp": return 6.0
+            case "tablespoon", "tablespoons", "tbsp": return 18.0
+            case "cup", "cups": return 288.0
+            case "ounce", "ounces", "oz": return 28.3495
+            case "pound", "pounds", "lb", "lbs": return 453.592
+            default: return nil
+            }
+        }
+        func gramsPerForGranulatedSugar(unit: String) -> Double? {
+            switch unit.lowercased() {
+            case "grams": return 1.0
+            case "g": return 1.0
+            case "teaspoon", "teaspoons", "tsp": return 4.2
+            case "tablespoon", "tablespoons", "tbsp": return 12.6
+            case "cup", "cups": return 200.0
+            case "ounce", "ounces", "oz": return 28.3495
+            case "pound", "pounds", "lb", "lbs": return 453.592
+            default: return nil
+            }
+        }
+        let staples: [StapleSpec] = [
+            StapleSpec(
+                nameTest: { ln in ln == "salt" },
+                unitToGrams: gramsPerForSalt,
+                defaultCategory: .spices
+            ),
+            StapleSpec(
+                nameTest: { ln in ln == "granulated sugar" },
+                unitToGrams: gramsPerForGranulatedSugar,
+                defaultCategory: .pantry
+            )
+        ]
+        // Accumulators keyed by lowercased name
+        struct Accum {
+            var totalGrams: Double
+            var exemplar: Ingredient
+        }
+        var nameToAccum: [String: Accum] = [:]
+        var passthrough: [Ingredient] = []
+        // First pass: accumulate for staples, passthrough everything else
+        for ing in ingredients {
+            let ln = ing.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if let spec = staples.first(where: { $0.nameTest(ln) }) {
+                if let gramsPerUnit = spec.unitToGrams(ing.unit), gramsPerUnit > 0 {
+                    let add = ing.amount * gramsPerUnit
+                    if var acc = nameToAccum[ln] {
+                        acc.totalGrams += add
+                        nameToAccum[ln] = acc
+                    } else {
+                        // Use current ingredient as exemplar for name/casing; force grams category fallback if needed
+                        let exemplar = Ingredient(
+                            name: ing.name,
+                            amount: 0,
+                            unit: "",
+                            category: ing.category
+                        )
+                        nameToAccum[ln] = Accum(totalGrams: add, exemplar: exemplar)
+                    }
+                    continue
+                }
+            }
+            passthrough.append(ing)
+        }
+        // Second pass: materialize merged staples in grams (rounded where appropriate)
+        for (ln, acc) in nameToAccum {
+            var total = acc.totalGrams
+            // Round to one decimal if not near an integer
+            let rounded = (abs(total.rounded() - total) < 1e-6) ? total.rounded() : (round(total * 10) / 10)
+            // Ensure category default if exemplar category is mismatched
+            let spec = staples.first { $0.nameTest(ln) }!
+            let cat = validateAndAdjustCategory(acc.exemplar.name, originalCategory: spec.defaultCategory)
+            let merged = Ingredient(name: acc.exemplar.name, amount: rounded, unit: "grams", category: cat)
+            passthrough.append(merged)
+        }
+        return passthrough
+    }
     
     private func sanitizeIngredient(_ ingredient: Ingredient) -> Ingredient {
 		var name = ingredient.name
@@ -3109,10 +3204,13 @@ class LLMService: ObservableObject {
         name = name.replacingOccurrences(of: #"[\s;:,\)\.]+$"#, with: "", options: .regularExpression)
         name = name.replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
         
-        // 1.9) Sugar cleanup: drop leading "packed" qualifiers for brown sugars
+        // 1.9) Cleanup: drop leading packing/qualifier words inside names (we already capture them in measurement when relevant)
         do {
+            // Specific sugars
             name = name.replacingOccurrences(of: #"(?i)^\s*(?:firmly\s+)?packed\s+(dark\s+brown\s+sugar)\b"#, with: "$1", options: .regularExpression)
             name = name.replacingOccurrences(of: #"(?i)^\s*(?:firmly\s+)?packed\s+(light\s+brown\s+sugar)\b"#, with: "$1", options: .regularExpression)
+            // Generic packed/heaping/scant etc. before a noun phrase
+            name = name.replacingOccurrences(of: #"(?i)^\s*(?:firmly\s+packed|loosely\s+packed|lightly\s+packed|tightly\s+packed|well\s+packed|packed|heaping|scant|rounded|level|generous)\s+"#, with: "", options: .regularExpression)
         }
 
         // 2.1) Reformat ground spices so the spice name comes first, with state in parentheses: "Cumin (Ground)"
@@ -3174,7 +3272,8 @@ class LLMService: ObservableObject {
         }
 
         // 2) Remove leading amounts/units from name; keep them only in fields
-        let leadingUnitPattern = #"(?i)^(?:[\d¼½¾/\.\-]+\s+)?(cups?|tablespoons?|tbsp|teaspoons?|tsp|ounces?|oz|pounds?|lb|lbs|grams?|g|milliliters?|ml|liters?|l(?![a-z])|pints?|quarts?|gallons?|servings?|slices?|cloves?|pieces?|balls?|buns?)\b\s*"#
+        // Accept optional qualifiers before the unit when the line begins with a measurement
+        let leadingUnitPattern = #"(?i)^(?:[\d¼½¾/\.\-]+\s+)?(?:(?:firmly\s+packed|loosely\s+packed|lightly\s+packed|tightly\s+packed|well\s+packed|packed|heaping|scant|rounded|level|generous)\s+)?(cups?|tablespoons?|tbsp|teaspoons?|tsp|ounces?|oz|pounds?|lb|lbs|grams?|g|milliliters?|ml|liters?|l(?![a-z])|pints?|quarts?|gallons?|servings?|slices?|cloves?|pieces?|drops?|balls?|buns?)\b\s*"#
         if let rx = try? NSRegularExpression(pattern: leadingUnitPattern) {
             let r = NSRange(name.startIndex..., in: name)
             if let m = rx.firstMatch(in: name, options: [], range: r), m.numberOfRanges >= 2,
@@ -3765,6 +3864,7 @@ class LLMService: ObservableObject {
     
     private func cleanIngredientName(_ name: String) -> String {
         var cleanedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let originalLowerForPreservation = cleanedName.lowercased()
 
         // Decode a few common HTML entities and normalize curly quotes early
         if !cleanedName.isEmpty {
@@ -3883,6 +3983,17 @@ class LLMService: ObservableObject {
             with: "",
             options: .regularExpression
         )
+        // Also drop comma/semicolon tails that begin with "cut into ..." or removal notes like "wing tips removed ..."
+        cleanedName = cleanedName.replacingOccurrences(
+            of: #"(?i)(?:,|;|–|-)\s*cut\s+into\b[^,;]*"#,
+            with: "",
+            options: .regularExpression
+        )
+        cleanedName = cleanedName.replacingOccurrences(
+            of: #"(?i)(?:,|;|–|-)\s*(?:wing\s+tips?\s+)?removed(?:\s+and\s+saved\s+for\s+stock(?:\s+or\s+discarded)?)?[^,;]*"#,
+            with: "",
+            options: .regularExpression
+        )
 
         // Remove leftover directional tails like "horizontally to create 4 pieces"
         cleanedName = cleanedName.replacingOccurrences(
@@ -3914,7 +4025,7 @@ class LLMService: ObservableObject {
 
 		// 4) Remove leading descriptors such as "finely chopped " at the start (also remove cleanliness/state descriptors like cleaned/deveined)
         cleanedName = cleanedName.replacingOccurrences(
-            of: #"(?i)^(?:finely|roughly|coarsely|thinly|thickly|lightly|well)?\s*(?:chopped|sliced|diced|minced|grated|shredded|torn|julienned|zested|cubed|mashed|pureed|whipped|beaten|crushed|halved|quartered|drained|rinsed|patted\s+dry|cleaned|deveined|shucked|scaled|gutted|trimmed)\s+"#,
+            of: #"(?i)^(?:finely|roughly|coarsely|thinly|thickly|lightly|well)?\s*(?:chopped|sliced|diced|minced|grated|torn|julienned|zested|cubed|mashed|pureed|whipped|beaten|crushed|halved|quartered|drained|rinsed|patted\s+dry|cleaned|deveined|shucked|scaled|gutted|trimmed)\s+"#,
             with: "",
             options: .regularExpression
         )
@@ -4083,6 +4194,12 @@ class LLMService: ObservableObject {
             with: "",
             options: .regularExpression
         )
+        // 8.3) Remove leading adverbs like "finely", "thinly", etc., if they survived earlier steps
+        cleanedName = cleanedName.replacingOccurrences(
+            of: #"(?i)^\s*(?:very\s+thinly|thinly|finely|roughly|coarsely)\b\s+"#,
+            with: "",
+            options: .regularExpression
+        )
 
         // 8.5) Fallback: if cleaning removed everything, salvage the last alphabetic word from the original
         if cleanedName.isEmpty {
@@ -4113,6 +4230,20 @@ class LLMService: ObservableObject {
                 }
             }
             cleanedName = rebuilt.joined(separator: " ")
+        }
+
+        // Preserve "shredded" for cheeses if it appeared in the original input
+        do {
+            let hadShredded = originalLowerForPreservation.contains("shredded")
+            if hadShredded {
+                let cheesePattern = #"(?i)\b(provolone|cheddar|swiss|mozzarella|parmesan|parmigiano|pecorino|romano|gouda|gruy(?:è|e)re|fontina|asiago|havarti|muenster|monterey\s+jack|pepper\s+jack|colby(?:\s+jack)?|feta|goat\s+cheese|blue\s+cheese|gorgonzola|ricotta|mascarpone|paneer|halloumi|queso\s+(?:fresco|blanco|anejo)|cotija|manchego)(?:\s+cheese)?\b"#
+                if let rx = try? NSRegularExpression(pattern: cheesePattern),
+                   rx.firstMatch(in: cleanedName, options: [], range: NSRange(cleanedName.startIndex..., in: cleanedName)) != nil {
+                    if cleanedName.range(of: #"(?i)\bshredded\b"#, options: .regularExpression) == nil {
+                        cleanedName = cleanedName.isEmpty ? "shredded" : "shredded " + cleanedName
+                    }
+                }
+            }
         }
 
         return cleanedName.isEmpty ? name : cleanedName
@@ -5400,6 +5531,13 @@ class LLMService: ObservableObject {
     
     // Special category overrides (priority order)
     private let categoryOverrides: [(String, GroceryCategory)] = [
+        // Pantry-first: any jams, jellies, and preserves (generic, high priority)
+        ("jam", .pantry),
+        ("jams", .pantry),
+        ("jelly", .pantry),
+        ("jellies", .pantry),
+        ("preserve", .pantry),
+        ("preserves", .pantry),
         // Pantry-first: oils
         ("olive oil", .pantry),
         ("vegetable oil", .pantry),
@@ -5487,6 +5625,21 @@ class LLMService: ObservableObject {
         ("bone broth", .pantry),
         ("stock", .pantry),
         ("broth", .pantry),
+
+        // Dairy: specific cheeses
+        ("provolone", .dairy),
+        ("provolone cheese", .dairy),
+        ("swiss cheese", .dairy),
+        ("white cheddar cheese", .dairy),
+        ("cheddar cheese", .dairy),
+
+        // Pantry: tomato paste is a pantry staple, not produce
+        ("tomato paste", .pantry),
+
+        // Produce: celery variants should always be produce
+        ("celery", .produce),
+        ("celery stalk", .produce),
+        ("celery stalks", .produce),
 
         // Pantry: pickled/jarred items commonly listed as rings
         ("banana pepper rings", .pantry),
