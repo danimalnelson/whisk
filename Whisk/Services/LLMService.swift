@@ -3316,7 +3316,7 @@ class LLMService: ObservableObject {
             // Tomatoes (exclude small varieties typically measured by volume like cherry/grape/baby)
             ProduceSpec(
                 baseName: "tomato",
-                detectRegex: rx("(?i)(?:^|[^a-z])(tomatoes?|roma\\s+tomatoes?)\\b"),
+                detectRegex: rx("(?i)(?:^|[^a-z])(tomato(?:es)?|roma\\s+tomato(?:es)?)\\b"),
                 cupsPerPiece: 0.75,
                 gramsPerPiece: 130.0,
                 pluralDisplay: "tomatoes",
@@ -3341,6 +3341,20 @@ class LLMService: ObservableObject {
             ProduceSpec(baseName: "lime", detectRegex: rx("(?i)(?:^|[^a-z])(limes?)\\b"), cupsPerPiece: 0.5, gramsPerPiece: 70.0, pluralDisplay: "limes", excludeRegex: nil),
             ProduceSpec(baseName: "orange", detectRegex: rx("(?i)(?:^|[^a-z])(oranges?)\\b"), cupsPerPiece: 1.0, gramsPerPiece: 180.0, pluralDisplay: "oranges", excludeRegex: nil)
         ]
+
+        // Title-case helper for variety labels (handles hyphenated tokens)
+        func titleCaseWords(_ s: String) -> String {
+            return s.split(separator: " ").map { w -> String in
+                let token = String(w)
+                let parts = token.split(separator: "-")
+                let cased = parts.map { p -> String in
+                    let str = String(p)
+                    guard let first = str.first else { return str }
+                    return String(first).uppercased() + str.dropFirst()
+                }.joined(separator: "-")
+                return cased
+            }.joined(separator: " ")
+        }
 
         // Helper: convert amount/unit to pieces using spec
         func volumeToCups(_ amount: Double, _ unit: String) -> Double? {
@@ -3396,7 +3410,7 @@ class LLMService: ObservableObject {
         }
 
         // Aggregate per baseName
-        struct Accum { var pieces: Double; var hadIntegerBase: Bool; var exemplarCategory: GroceryCategory }
+        struct Accum { var pieces: Double; var hadIntegerBase: Bool; var exemplarCategory: GroceryCategory; var varietyLabels: Set<String>; var sawGeneric: Bool }
         var accum: [String: Accum] = [:]
         var consumedIndices: Set<Int> = []
         // Iterate and collect
@@ -3428,9 +3442,73 @@ class LLMService: ObservableObject {
                 continue
             }
 
-            var a = accum[spec.baseName] ?? Accum(pieces: 0, hadIntegerBase: false, exemplarCategory: ing.category)
+            // Extract a variety/qualifier label if present (e.g., "plum or roma", "roma", "english", "navel", "red")
+            func titleCaseWords(_ s: String) -> String {
+                return s.split(separator: " ").map { w -> String in
+                    let token = String(w)
+                    let parts = token.split(separator: "-")
+                    let cased = parts.map { p -> String in
+                        let str = String(p)
+                        guard let first = str.first else { return str }
+                        return String(first).uppercased() + str.dropFirst()
+                    }.joined(separator: "-")
+                    return cased
+                }.joined(separator: " ")
+            }
+            func varietyLabel(forBase base: String, inName ln: String) -> String? {
+                let n = ln
+                switch base {
+                case "tomato":
+                    if n.range(of: #"(?i)\b(plum\s+or\s+roma|roma\s+or\s+plum)\b"#, options: .regularExpression) != nil { return "plum or roma" }
+                    let tokens = ["san marzano", "vine-ripe", "vine ripened", "beefsteak", "heirloom", "roma", "plum"]
+                    if let t = tokens.first(where: { n.range(of: #"(?i)\b\#(NSRegularExpression.escapedPattern(for: $0))\b"#, options: .regularExpression) != nil }) { return t }
+                    return nil
+                case "cucumber":
+                    let tokens = ["english", "persian", "seedless", "hothouse", "kirby"]
+                    if let t = tokens.first(where: { n.range(of: #"(?i)\b\#(NSRegularExpression.escapedPattern(for: $0))\b"#, options: .regularExpression) != nil }) { return t }
+                    return nil
+                case "orange":
+                    let tokens = ["navel", "valencia", "blood"]
+                    if let t = tokens.first(where: { n.range(of: #"(?i)\b\#(NSRegularExpression.escapedPattern(for: $0))\b"#, options: .regularExpression) != nil }) { return t }
+                    return nil
+                case "onion":
+                    let tokens = ["yellow", "white", "red", "sweet", "vidalia"]
+                    if let t = tokens.first(where: { n.range(of: #"(?i)\b\#(NSRegularExpression.escapedPattern(for: $0))\b"#, options: .regularExpression) != nil }) { return t }
+                    return nil
+                case "potato":
+                    let tokens = ["yukon gold", "russet", "red", "fingerling", "gold"]
+                    if let t = tokens.first(where: { n.range(of: #"(?i)\b\#(NSRegularExpression.escapedPattern(for: $0))\b"#, options: .regularExpression) != nil }) { return t }
+                    return nil
+                case "apple":
+                    let tokens = ["granny smith", "fuji", "honeycrisp", "gala"]
+                    if let t = tokens.first(where: { n.range(of: #"(?i)\b\#(NSRegularExpression.escapedPattern(for: $0))\b"#, options: .regularExpression) != nil }) { return t }
+                    return nil
+                case "pear":
+                    let tokens = ["bartlett", "anjou", "d'anjou", "bosc"]
+                    if let t = tokens.first(where: { n.range(of: #"(?i)\b\#(NSRegularExpression.escapedPattern(for: $0))\b"#, options: .regularExpression) != nil }) { return t }
+                    return nil
+                case "avocado":
+                    let tokens = ["hass"]
+                    if let t = tokens.first(where: { n.range(of: #"(?i)\b\#(NSRegularExpression.escapedPattern(for: $0))\b"#, options: .regularExpression) != nil }) { return t }
+                    return nil
+                case "bell pepper":
+                    if let m = try? NSRegularExpression(pattern: #"(?i)\b(red|green|yellow|orange)\s+bell\s+peppers?\b"#).firstMatch(in: n, options: [], range: NSRange(n.startIndex..., in: n)), m.numberOfRanges >= 2, let r = Range(m.range(at: 1), in: n) {
+                        return String(n[r])
+                    }
+                    return nil
+                default:
+                    return nil
+                }
+            }
+
+            var a = accum[spec.baseName] ?? Accum(pieces: 0, hadIntegerBase: false, exemplarCategory: ing.category, varietyLabels: Set<String>(), sawGeneric: false)
             a.pieces += addPieces
             if isPieceUnit(unit) && ing.amount >= 1.0 { a.hadIntegerBase = true }
+            if let v = varietyLabel(forBase: spec.baseName, inName: ln) {
+                a.varietyLabels.insert(v)
+            } else {
+                a.sawGeneric = true
+            }
             accum[spec.baseName] = a
             consumedIndices.insert(idx)
         }
@@ -3445,12 +3523,38 @@ class LLMService: ObservableObject {
         }
         for (base, a) in accum {
             guard let spec = specs.first(where: { $0.baseName == base }) else { continue }
-            let rounded = max(0.0, roundPieces(a.pieces, hasIntegerBase: a.hadIntegerBase))
-            if rounded <= 0 { continue }
-            // Use plural display; unit = pieces (singularize if 1?)
-            let unit = rounded == 1.0 ? "piece" : "pieces"
-            let name = rounded == 1.0 ? spec.baseName : spec.pluralDisplay
-            out.append(Ingredient(name: name, amount: rounded, unit: unit, category: a.exemplarCategory))
+            var total = a.pieces
+            if total <= 0 { continue }
+            let frac = total - floor(total)
+            // Decide display variety label: if exactly one label across all, use it; merge generic with that label
+            var variety: String? = nil
+            if a.varietyLabels.count == 1 {
+                variety = a.varietyLabels.first
+            }
+            func composeName(_ plural: Bool) -> String {
+                let baseName = plural ? spec.pluralDisplay : spec.baseName
+                if let v = variety {
+                    return titleCaseWords(v) + " " + baseName
+                }
+                return baseName
+            }
+            // If we saw both variety-specific and generic, keep the specific label instead of dropping to generic
+            if variety == nil && a.varietyLabels.count >= 1 && a.sawGeneric {
+                variety = a.varietyLabels.first
+            }
+            if frac < 1e-6 { // integer
+                let piecesInt = Int(round(total))
+                let unit = "" // show bare count for large produce
+                let name = composeName(piecesInt != 1)
+                out.append(Ingredient(name: name, amount: Double(piecesInt), unit: unit, category: a.exemplarCategory))
+            } else {
+                var low = Int(floor(total))
+                let high = Int(ceil(total))
+                if low < 1 { low = 1 }
+                let name = composeName(true)
+                let unit = "to \(high)" // display as a range amount, unit empty
+                out.append(Ingredient(name: name, amount: Double(low), unit: unit, category: a.exemplarCategory))
+            }
         }
 
         return out
@@ -3464,6 +3568,11 @@ class LLMService: ObservableObject {
         let originalCategory = ingredient.category
         let lowerName = name.lowercased()
         let lowerUnit = unit.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Enforce leaf/leafs for bay at this final stage as well
+        if lowerName.trimmingCharacters(in: .whitespacesAndNewlines) == "bay" {
+            name = "bay leaves"
+        }
 
         // Canonicalize select proper nouns early
         do {
