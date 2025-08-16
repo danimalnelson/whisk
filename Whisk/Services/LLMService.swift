@@ -116,7 +116,8 @@ class LLMService: ObservableObject {
         "head": "heads", "heads": "heads",
         "piece": "pieces", "pieces": "pieces",
         "leaf": "leaves", "leaves": "leaves",
-        "sprig": "sprigs", "sprigs": "sprigs"
+        "sprig": "sprigs", "sprigs": "sprigs",
+        "ear": "ears", "ears": "ears"
     ]
 
     // MARK: - Category keyword hints (broad heuristics; overrides take precedence)
@@ -142,13 +143,15 @@ class LLMService: ObservableObject {
             "chili powder", "chilli powder", "chile powder", "cayenne", "sumac", "za'atar", "five-spice",
             "allspice", "allspice berries", "bay leaf", "bay leaves", "star anise", "anise seed", "fennel seed",
             "mustard seed", "fenugreek", "clove", "cloves", "nutmeg", "mace", "cardamom", "saffron",
+            // garlic forms
+            "garlic powder", "powdered garlic", "granulated garlic",
             // peppers as spices
             "black pepper", "white pepper", "peppercorn", "peppercorns", "red pepper flakes", "chili flakes", "chile flakes",
             // salts
             "salt", "sea salt", "kosher salt", "table salt"
         ],
         .dairy: ["milk", "butter", "cream", "cheese", "yogurt"],
-        .beverages: ["wine", "beer", "soda", "cocktail"]
+        .beverages: ["wine", "beer", "cocktail", "club soda", "soda water"]
     ]
     
     @MainActor
@@ -615,8 +618,15 @@ class LLMService: ObservableObject {
             
             // Parse each ingredient string
             for ingredientString in ingredientList {
-                if let ingredient = parseIngredientFromString(ingredientString) {
-                    ingredients.append(ingredient)
+                // Split compound ingredient lines into multiple logical items (e.g., "zest + juice, plus wedges for serving")
+                let segments = splitCompoundIngredientString(ingredientString)
+                for segment in segments {
+                    if let ingredient = parseIngredientFromString(segment) {
+                        // Enforce category overrides post-parse for structured data path
+                        let finalCategory = validateAndAdjustCategory(ingredient.name, originalCategory: ingredient.category)
+                        let finalIngredient = Ingredient(name: ingredient.name, amount: ingredient.amount, unit: ingredient.unit, category: finalCategory)
+                        ingredients.append(finalIngredient)
+                    }
                 }
             }
             
@@ -1378,6 +1388,42 @@ class LLMService: ObservableObject {
         }
     }
 
+    // Heuristic splitter for compound ingredient strings like
+    // "2 tsp grated lime zest plus 1/4 cup (60 ml) juice (from 2 limes), plus lime wedges for serving"
+    private func splitCompoundIngredientString(_ raw: String) -> [String] {
+        let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.isEmpty { return [] }
+
+        // Normalize unicode fractions to help downstream amount detection
+        var normalized = s
+        let fractionMap: [Character: String] = [
+            "¼": "1/4", "½": "1/2", "¾": "3/4",
+            "⅓": "1/3", "⅔": "2/3",
+            "⅛": "1/8", "⅜": "3/8", "⅝": "5/8", "⅞": "7/8"
+        ]
+        var tmp: String = ""
+        for ch in normalized { tmp.append(fractionMap[ch] ?? String(ch)) }
+        normalized = tmp
+
+        // If the line expresses alternatives (contains " or "), do not split; treat as one ingredient
+        if normalized.range(of: #"(?i)\bor\b"#, options: .regularExpression) != nil {
+            return [normalized]
+        }
+
+        // Only split on additive connectors ("plus"/"and") when a new measurement or serving wedge follows
+        let piece = normalized
+        let pattern = "(?i)\\b(?:plus|and)\\b\\s+(?=(?:\\d|one|two|three|four|five|six|seven|eight|nine|a|an)\\b|(?:teaspoons?|tsp|tablespoons?|tbsp|cups?|ounces?|oz|milliliters?|ml|liters?|l)\\b|lime\\s+wedges?\\b|lemon\\s+wedges?\\b)"
+        if let rx = try? NSRegularExpression(pattern: pattern),
+           rx.firstMatch(in: piece, options: [], range: NSRange(piece.startIndex..., in: piece)) != nil {
+            let marked = rx.stringByReplacingMatches(in: piece, options: [], range: NSRange(piece.startIndex..., in: piece), withTemplate: "||| ")
+            let parts = marked.split(separator: "|").map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+            return parts.map { seg in
+                seg.replacingOccurrences(of: "(?i)^(?:plus|and)\\s+", with: "", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        return [normalized]
+    }
+
     // 🚀 NEW: Parse amount from string (handles fractions)
     func parseAmount(_ amountString: String) -> Double {
         let cleanAmount = amountString.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1428,12 +1474,7 @@ class LLMService: ObservableObject {
             return .spices
         }
 
-        // Prefer Produce for fresh roots/spices, peppers, onions, garlic, carrots, potatoes (handle plural forms)
-        if lowercasedName.range(of: #"(?i)\b(ginger|scotch\s+bonnet|habanero|jalapeño|jalapeno|bell\s+peppers?|peppers?|onions?|shallots?|scallions?|green\s+onions?|spring\s+onions?|garlic|garlic\s+cloves?|carrots?|potatoes?|yukon\s+gold|russet)\b"#, options: .regularExpression) != nil {
-            return .produce
-        }
-
-        // Check category overrides (spirits, stocks, salts/peppers) with word-boundary matching
+        // Check category overrides early (e.g., "garlic powder" → Spices, "baking soda" → Pantry)
         for (keyword, category) in categoryOverrides {
             let base = NSRegularExpression.escapedPattern(for: keyword)
             // Allow spaces in keyword; match with spaces/hyphens flexibly
@@ -1443,6 +1484,11 @@ class LLMService: ObservableObject {
                rx.firstMatch(in: lowercasedName, options: [], range: NSRange(lowercasedName.startIndex..., in: lowercasedName)) != nil {
                 return category
             }
+        }
+
+        // Prefer Produce for fresh roots/spices, peppers, onions, garlic, carrots, potatoes (handle plural forms)
+        if lowercasedName.range(of: #"(?i)\b(ginger|scotch\s+bonnet|habanero|jalapeño|jalapeno|bell\s+peppers?|peppers?|onions?|shallots?|scallions?|green\s+onions?|spring\s+onions?|garlic|garlic\s+cloves?|carrots?|potatoes?|yukon\s+gold|russet)\b"#, options: .regularExpression) != nil {
+            return .produce
         }
 
         // Check category keywords (force 'frozen' to Frozen category first),
@@ -1572,6 +1618,140 @@ class LLMService: ObservableObject {
         // TEMP DEBUG removed
         var cleanString = ingredientString.trimmingCharacters(in: .whitespacesAndNewlines)
         var isCannedOrJarredItem: Bool = false
+
+        // COUNT + (SIZE) rounds + NAME (e.g., "4 (1/2-inch-thick) rounds red onion")
+        do {
+            let pattern = #"(?is)^\s*(\d+[\d\/\s\.]*)\s*(?:\(([^)]*?)\)\s*)?(rounds?)\s+(.+)$"#
+            if let rx = try? NSRegularExpression(pattern: pattern) {
+                let r = NSRange(cleanString.startIndex..., in: cleanString)
+                if let m = rx.firstMatch(in: cleanString, options: [], range: r), m.numberOfRanges >= 5,
+                   let ar = Range(m.range(at: 1), in: cleanString),
+                   let sr = Range(m.range(at: 2), in: cleanString),
+                   let ur = Range(m.range(at: 3), in: cleanString),
+                   let nr = Range(m.range(at: 4), in: cleanString) {
+                    let amount = parseAmount(String(cleanString[ar]))
+                    let size = sr.isEmpty ? nil : String(cleanString[sr])
+                    let roundsWord = String(cleanString[ur]).lowercased()
+                    var namePart = String(cleanString[nr]).trimmingCharacters(in: .whitespacesAndNewlines)
+                    // Strip trailing parentheticals and preparation notes from name
+                    namePart = namePart.replacingOccurrences(of: #"\([^)]*\)$"#, with: "", options: .regularExpression)
+                    namePart = namePart.replacingOccurrences(of: #"(?i),\s*(?:unseeded|seeded).*?$"#, with: "", options: .regularExpression)
+                    // Remove leading prep descriptors (fresh/peeled/cored etc.)
+                    namePart = namePart.replacingOccurrences(of: #"(?i)^(?:fresh\s+)?(?:(?:peeled\s+(?:and\s+)?cored)|peeled|cored|seeded|unseeded)\s+"#, with: "", options: .regularExpression)
+                    namePart = namePart.trimmingCharacters(in: .whitespacesAndNewlines)
+                    // Build unit
+                    let baseUnit = roundsWord.hasSuffix("s") ? "rounds" : "round"
+                    let unit: String = {
+                        if let s = size, !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            return "(\(s)) \(baseUnit)"
+                        }
+                        return baseUnit
+                    }()
+                    let category = determineCategory(namePart)
+                    return Ingredient(name: namePart, amount: amount, unit: unit, category: category)
+                }
+            }
+        }
+
+        // Amount RANGE + unit + name (e.g., "2 to 5 teaspoons cornstarch")
+        do {
+            let pattern = #"(?is)^\s*(\d+[\d\/\s\.]*)\s*(?:to|\-|–)\s*(\d+[\d\/\s\.]*)\s*(tablespoons?|tbsp|teaspoons?|tsp|cups?|ounces?|oz|milliliters?|ml|liters?|l)\s+(.+)$"#
+            if let rx = try? NSRegularExpression(pattern: pattern) {
+                let r = NSRange(cleanString.startIndex..., in: cleanString)
+                if let m = rx.firstMatch(in: cleanString, options: [], range: r), m.numberOfRanges >= 5,
+                   let rMin = Range(m.range(at: 1), in: cleanString),
+                   let rMax = Range(m.range(at: 2), in: cleanString),
+                   let rUnit = Range(m.range(at: 3), in: cleanString),
+                   let rName = Range(m.range(at: 4), in: cleanString) {
+                    let minText = String(cleanString[rMin]).trimmingCharacters(in: .whitespaces)
+                    let maxText = String(cleanString[rMax]).trimmingCharacters(in: .whitespaces)
+                    let unitRaw = String(cleanString[rUnit])
+                    let nameRaw = String(cleanString[rName])
+                    let unitStd = standardizeUnit(unitRaw)
+                    // Force plural for ranges
+                    let unitPlural: String = {
+                        switch unitStd.lowercased() {
+                        case "teaspoon", "tsp": return "teaspoons"
+                        case "tablespoon", "tbsp": return "tablespoons"
+                        case "cup": return "cups"
+                        case "ounce", "oz": return "ounces"
+                        case "milliliter", "ml": return "milliliters"
+                        case "liter", "l": return "liters"
+                        default: return unitStd
+                        }
+                    }()
+                    var cleanedName = cleanIngredientName(nameRaw)
+                    // Drop trailing prep notes after commas or parentheses
+                    cleanedName = cleanedName.replacingOccurrences(of: #"\([^)]*\)$"#, with: "", options: .regularExpression)
+                    cleanedName = cleanedName.replacingOccurrences(of: #"(?i),\s*(?:unseeded|seeded).*?$"#, with: "", options: .regularExpression)
+                    cleanedName = cleanedName.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let category = determineCategory(cleanedName)
+                    let unitCombined = "\(minText) to \(maxText) \(unitPlural)"
+                    return Ingredient(name: cleanedName, amount: 0.0, unit: unitCombined, category: category)
+                }
+            }
+        }
+
+        // Leading COUNT + (WEIGHT) + NAME (e.g., "1 (4-pound) boneless pork shoulder ...")
+        do {
+            let pattern = #"(?is)^\s*(\d+[\d\/\s\.]*)\s*\((\d+(?:\.\d+)?)\s*-?\s*pounds?\)\s*(.+)$"#
+            if let rx = try? NSRegularExpression(pattern: pattern) {
+                let r = NSRange(cleanString.startIndex..., in: cleanString)
+                if let m = rx.firstMatch(in: cleanString, options: [], range: r), m.numberOfRanges >= 4,
+                   let ar = Range(m.range(at: 1), in: cleanString),
+                   let wr = Range(m.range(at: 2), in: cleanString),
+                   let nr = Range(m.range(at: 3), in: cleanString) {
+                    let amount = parseAmount(String(cleanString[ar]))
+                    let weight = String(cleanString[wr])
+                    var namePart = String(cleanString[nr])
+                    // Remove inner parentheticals like alternate names (e.g., Boston butt) and notes
+                    namePart = namePart.replacingOccurrences(of: #"\([^)]*\)"#, with: "", options: .regularExpression)
+                    namePart = namePart.replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
+                    let unit = "(\(weight)-pound)"
+                    let category = determineCategory(namePart)
+                    return Ingredient(name: namePart, amount: amount, unit: unit, category: category)
+                }
+            }
+        }
+
+        // Protein fillet special-case: capture count + optional ounce size + descriptive fish fillets
+        do {
+            // Example: "4 (6- to 7-ounce) skin-on, center-cut (3/4 inch thick) wild king, coho, or sockeye salmon fillets"
+            // Groups: 1=count, 2=optional size parens, 3=rest of name including "fillets"
+            let pattern = #"(?is)^\s*(\d+[\d\/\s\.]*)\s*(?:\(([^)]*?ounce[^)]*)\))?\s*(.+?\bfillets?\b)\s*$"#
+            if let rx = try? NSRegularExpression(pattern: pattern) {
+                let r = NSRange(cleanString.startIndex..., in: cleanString)
+                if let m = rx.firstMatch(in: cleanString, options: [], range: r), m.numberOfRanges >= 4,
+                   let ar = Range(m.range(at: 1), in: cleanString),
+                   let nr = Range(m.range(at: 3), in: cleanString) {
+                    let amount = parseAmount(String(cleanString[ar]))
+                    var namePart = String(cleanString[nr])
+                    // Remove any remaining parentheticals inside the name (e.g., thickness notes)
+                    namePart = namePart.replacingOccurrences(of: #"\([^)]*\)"#, with: "", options: .regularExpression)
+                    namePart = namePart.replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
+                    // Build unit from size if present
+                    var unit = "fillets"
+                    if let sr = Range(m.range(at: 2), in: cleanString) {
+                        let sizeText = String(cleanString[sr])
+                        // Try to extract a range like "6- to 7-ounce" or "6 to 7 ounce"
+                        if let rx2 = try? NSRegularExpression(pattern: #"(?i)(\d+)\s*(?:-\s*to\s*|\s*to\s*|-)\s*(\d+)\s*-?\s*ounce"#),
+                           let mm = rx2.firstMatch(in: sizeText, options: [], range: NSRange(sizeText.startIndex..., in: sizeText)),
+                           mm.numberOfRanges >= 3,
+                           let r1 = Range(mm.range(at: 1), in: sizeText),
+                           let r2 = Range(mm.range(at: 2), in: sizeText) {
+                            unit = "(\(String(sizeText[r1]))- to \(String(sizeText[r2]))-ounce) fillets"
+                        } else if let rx3 = try? NSRegularExpression(pattern: #"(?i)(\d+(?:\.\d+)?)\s*-?\s*ounce"#),
+                                  let mm = rx3.firstMatch(in: sizeText, options: [], range: NSRange(sizeText.startIndex..., in: sizeText)),
+                                  mm.numberOfRanges >= 2,
+                                  let r1 = Range(mm.range(at: 1), in: sizeText) {
+                            unit = "(\(String(sizeText[r1]))-ounce) fillets"
+                        }
+                    }
+                    let category: GroceryCategory = .meatAndSeafood
+                    return Ingredient(name: namePart, amount: amount, unit: unit, category: category)
+                }
+            }
+        }
 
         // Herb with explicit volume + "leaves" (e.g., "1 tablespoon picked fresh thyme leaves") → keep volume
         do {
@@ -1808,7 +1988,7 @@ class LLMService: ObservableObject {
         if lower.range(of: #"\b(?:about\s+)?\d+\s+(minutes?|seconds?)\b"#, options: .regularExpression) != nil { return nil }
         
         // Try to extract amount and unit using regex (include full words to prevent leakage into name)
-        let pattern = #"(?i)(\d+[\d\/\s\.]*)\s*(cup|cups|teaspoon|teaspoons|tsp|tablespoon|tablespoons|tbsp|oz|ounce|ounces|pound|pounds|grams?|g(?![a-z])|ml|milliliter|milliliters|liter|liters|l(?![a-z])|pint|pints|quart|quarts|gallon|gallons|servings?|serving|clove|cloves|leaf|leaves|sprig|sprigs|piece|pieces|pinch|pinches|can|cans|jar|jars|bottle|bottles|package|packages|bag|bags|bunch|bunches|head|heads|slice|slices|small|medium|large|extra\s*large|xl)?\s*(.*)"#
+        let pattern = #"(?i)(\d+[\d\/\s\.]*)\s*(cup|cups|teaspoon|teaspoons|tsp|tablespoon|tablespoons|tbsp|oz|ounce|ounces|pound|pounds|grams?|g(?![a-z])|ml|milliliter|milliliters|liter|liters|l(?![a-z])|pint|pints|quart|quarts|gallon|gallons|servings?|serving|clove|cloves|leaf|leaves|sprig|sprigs|ear|ears|piece|pieces|pinch|pinches|can|cans|jar|jars|bottle|bottles|package|packages|bag|bags|bunch|bunches|head|heads|slice|slices|small|medium|large|extra\s*large|xl)?\s*(.*)"#
         
         guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
               let match = regex.firstMatch(in: cleanString, options: [], range: NSRange(cleanString.startIndex..., in: cleanString)),
@@ -2017,7 +2197,14 @@ class LLMService: ObservableObject {
                         }
                     }
                     let containerWord = (abs(amount - 1.0) < 0.0001) ? singularFor(normalizedContainer) : normalizedContainer
-                    unit = "\(sizeText) \(containerWord)"
+                    // Hyphenate common imperial units when appropriate (e.g., "13.5 ounce" → "13.5-ounce")
+                    let hyphenated: String = {
+                        var s = sizeText
+                        s = s.replacingOccurrences(of: #"(?i)(\d)\s+(ounce|ounces)\b"#, with: "$1-$2", options: .regularExpression)
+                        s = s.replacingOccurrences(of: #"(?i)(\d)\s+(pound|pounds)\b"#, with: "$1-$2", options: .regularExpression)
+                        return s
+                    }()
+                    unit = "(\(hyphenated)) \(containerWord)"
                 } else {
                     unit = normalizedContainer
                 }
@@ -2048,6 +2235,20 @@ class LLMService: ObservableObject {
                    let r = Range(m.range(at: 1), in: rawName) {
                     unit = "pinches"
                     rawName = String(rawName[r]).trimmingCharacters(in: .whitespaces)
+                }
+            }
+            // Chiles: capture count + size + fresh + variety, stripping trailing preparation notes
+            if unit.isEmpty || sizeTokens.contains(unitLower) {
+                if let m = try? NSRegularExpression(pattern: #"(?i)^\s*(?:fresh\s+)?(?:thai|thai\s+bird|bird's\s+eye)\s+chiles?\b"#)
+                    .firstMatch(in: rawName, options: [], range: NSRange(rawName.startIndex..., in: rawName)) {
+                    unit = unit.isEmpty ? (sizeTokens.contains(unitLower) ? unitLower : "pieces") : unit
+                    // Name should be variety + chiles
+                    var base = rawName
+                    // Remove trailing prep descriptors like ", unseeded and thinly sliced (about 2 teaspoons)"
+                    base = base.replacingOccurrences(of: #"(?i),\s*unseeded.*$"#, with: "", options: .regularExpression)
+                    base = base.replacingOccurrences(of: #"(?i),\s*(?:seeded|unseeded).*?$"#, with: "", options: .regularExpression)
+                    base = base.replacingOccurrences(of: #"\([^)]*\)$"#, with: "", options: .regularExpression)
+                    rawName = base.trimmingCharacters(in: .whitespaces)
                 }
             }
         }
@@ -2093,7 +2294,7 @@ class LLMService: ObservableObject {
                 // Build unit with size if available
                 let pieceWord = unit.lowercased().contains("pieces") ? "pieces" : (unit.lowercased().contains("piece") ? "piece" : (startsWithPiece ? "piece" : unit))
                 if !sizeText.isEmpty {
-                    unit = sizeText + " " + pieceWord
+                    unit = "(\(sizeText)) " + pieceWord
                 } else {
                     unit = pieceWord
                 }
@@ -2104,7 +2305,9 @@ class LLMService: ObservableObject {
         // Prefer concrete examples after comma (such as/like/e.g.)
         // Otherwise, choose the segment that looks like a real ingredient (produce beats pantry),
         // falling back to the longer segment. Treat trailing citrus source notes ("from N limes") as notes.
-        if let commaIndex = firstTopLevelCommaIndex(in: cleanName) {
+        // IMPORTANT: If the line expresses alternatives (contains " or "), do not split; keep as one ingredient.
+        if cleanName.range(of: #"(?i)\bor\b"#, options: .regularExpression) == nil,
+           let commaIndex = firstTopLevelCommaIndex(in: cleanName) {
             let before = String(cleanName[..<commaIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
             let after = String(cleanName[cleanName.index(after: commaIndex)...]).trimmingCharacters(in: .whitespacesAndNewlines)
             // If trailing clause is a citrus source note like "from about 4 small limes", prefer the main ingredient
@@ -2154,6 +2357,65 @@ class LLMService: ObservableObject {
             }
         }
         unit = unit.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Corn ears normalization: e.g., "2 ears yellow corn, husked" → name: "yellow corn", unit: "ears", amount: 2
+        do {
+            let lower = cleanName.lowercased()
+            let hasCorn = lower.contains("corn")
+            let hasEarInName = lower.range(of: #"(?i)\bears?\b"#, options: .regularExpression) != nil
+            if hasCorn && hasEarInName {
+                // Move ears token to unit when amount exists and current unit is empty or piece(s)
+                if amount > 0, unit.isEmpty || unit.lowercased() == "piece" || unit.lowercased() == "pieces" {
+                    unit = amount == 1 ? "ear" : "ears"
+                }
+                // Remove the ear(s) token from the name to keep it clean
+                cleanName = cleanName.replacingOccurrences(of: #"(?i)\bears?\b"#, with: "", options: .regularExpression)
+                // Remove redundant commas/spaces
+                cleanName = cleanName.replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression)
+                    .replacingOccurrences(of: #"\s+,\s*"#, with: ", ", options: .regularExpression)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+
+        // Normalize generic "juice" with source to specific citrus juice (e.g., "juice (from 2 limes)" → "Lime Juice")
+        do {
+            let lower = cleanName.lowercased()
+            let isGenericJuice = lower == "juice" || lower.hasPrefix("juice ")
+            if isGenericJuice {
+                // Look in original string for a "from <fruit>" hint (optionally inside parentheses)
+                let pattern = #"(?i)from\s+\d*[\d\/\s\.]*\s*(?:whole\s+)?(lemon|lemons|lime|limes|orange|oranges|grapefruit|grapefruits)\b"#
+                if let rx = try? NSRegularExpression(pattern: pattern),
+                   let m = rx.firstMatch(in: cleanString, options: [], range: NSRange(cleanString.startIndex..., in: cleanString)),
+                   m.numberOfRanges >= 2,
+                   let r = Range(m.range(at: 1), in: cleanString) {
+                    let fruit = String(cleanString[r]).lowercased().replacingOccurrences(of: "s$", with: "", options: .regularExpression)
+                    let titled = fruit.prefix(1).uppercased() + fruit.dropFirst()
+                    cleanName = "\(titled) Juice"
+                }
+            }
+        }
+
+        // Protein fillet normalization: set unit to fillets and attach size range if present
+        do {
+            let lower = cleanName.lowercased()
+            if lower.range(of: #"(?i)\bfillets?\b"#, options: .regularExpression) != nil {
+                if unit.isEmpty || unit.lowercased() == "piece" || unit.lowercased() == "pieces" {
+                    var finalUnit = "fillets"
+                    // Capture ounce size range like "(6- to 7-ounce)" or "(6 to 7 ounce)"
+                    let pattern = #"(?i)\((\d+)\s*(?:-\s*to\s*|\s*to\s*|-)\s*(\d+)\s*-?\s*ounce\)"#
+                    if let rx = try? NSRegularExpression(pattern: pattern),
+                       let m = rx.firstMatch(in: cleanString, options: [], range: NSRange(cleanString.startIndex..., in: cleanString)),
+                       m.numberOfRanges >= 3,
+                       let r1 = Range(m.range(at: 1), in: cleanString),
+                       let r2 = Range(m.range(at: 2), in: cleanString) {
+                        let a = String(cleanString[r1])
+                        let b = String(cleanString[r2])
+                        finalUnit = "\(a)-\(b)-ounce fillets"
+                    }
+                    unit = finalUnit
+                }
+            }
+        }
 
         // If this is produce and unit is a count-like token or empty, round up fractional amounts
         let countUnits: Set<String> = ["", "piece", "pieces", "small", "medium", "large", "extra large", "heads", "head", "bunch", "bunches", "clove", "cloves", "sprig", "sprigs", "leaf", "leaves"]
@@ -2704,10 +2966,29 @@ class LLMService: ObservableObject {
     // MARK: - Final Sanitization (name-only enforcement)
     
     private func sanitizeIngredientList(_ ingredients: [Ingredient]) -> [Ingredient] {
+        // Precompute presence of measured salt/pepper to suppress zero-like duplicates
+        let measuredSaltExists = ingredients.contains { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().contains("salt") && $0.amount > 0 }
+        let measuredPepperExists = ingredients.contains { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().contains("pepper") && $0.amount > 0 }
+
         var result: [Ingredient] = []
         var seen: Set<String> = []
         for ing in ingredients {
             let sanitized = sanitizeIngredient(ing)
+            // Drop non-ingredient descriptor-only lines and notes
+            do {
+                let lower = sanitized.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                if lower.isEmpty { continue }
+                let descriptorOnly = [
+                    "picked through", "husked", "quartered", "use half as much by volume",
+                    "use half as much by volume or the same weight", "if desired", "toppings", "more", "wedges",
+                    "and smashed", "well shaken and stirred", "s", "inch-thick strips"
+                ]
+                if descriptorOnly.contains(lower) { continue }
+                // Keep "lime wedges", drop solitary "wedges"
+                if lower == "wedges" { continue }
+                // Drop stray single-letter tokens
+                if lower == "s" { continue }
+            }
             // Robust dedup key: ignore trivial casing, stray leading adverbs, and unit punctuation differences
             let normalizedNameForKey: String = {
                 var n = sanitized.name
@@ -2733,13 +3014,36 @@ class LLMService: ObservableObject {
             // Split salt and pepper combo if present
             let lower = sanitized.name.lowercased()
             if lower.contains("salt") && lower.contains("pepper") && lower.contains(" and ") {
-                let salt = Ingredient(name: "salt", amount: 0.0, unit: "To taste", category: .spices)
-                let pepper = Ingredient(name: "black pepper", amount: 0.0, unit: "To taste", category: .spices)
-                if !result.contains(where: { $0.name.lowercased() == salt.name }) { result.append(salt) }
-                if !result.contains(where: { $0.name.lowercased() == pepper.name }) { result.append(pepper) }
+                if !measuredSaltExists {
+                    let salt = Ingredient(name: "salt", amount: 0.0, unit: "To taste", category: .spices)
+                    if !result.contains(where: { $0.name.lowercased() == salt.name }) { result.append(salt) }
+                }
+                if !measuredPepperExists {
+                    let pepper = Ingredient(name: "black pepper", amount: 0.0, unit: "To taste", category: .spices)
+                    if !result.contains(where: { $0.name.lowercased() == pepper.name }) { result.append(pepper) }
+                }
                 continue
             }
-            result.append(sanitized)
+            // Suppress zero-like salt duplicates when a measured salt exists
+            if lower == "salt" && sanitized.amount == 0.0 {
+                let u = sanitized.unit.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                if u.isEmpty || u == "to taste" {
+                    if measuredSaltExists { continue }
+                }
+            }
+            // Drop blanks that slipped through (e.g., empty name with only a unit/amount)
+            if sanitized.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { continue }
+            // Final category enforcement: apply overrides/validation one more time
+            var enforcedCategory = validateAndAdjustCategory(sanitized.name, originalCategory: sanitized.category)
+            // Hard guard for garlic powder forms
+            do {
+                let ln = sanitized.name.lowercased()
+                if ln.contains("garlic powder") || ln.contains("granulated garlic") || ln.contains("powdered garlic") {
+                    enforcedCategory = .spices
+                }
+            }
+            let finalSanitized = Ingredient(name: sanitized.name, amount: sanitized.amount, unit: sanitized.unit, category: enforcedCategory)
+            result.append(finalSanitized)
         }
         return result
     }
@@ -2805,6 +3109,12 @@ class LLMService: ObservableObject {
         name = name.replacingOccurrences(of: #"[\s;:,\)\.]+$"#, with: "", options: .regularExpression)
         name = name.replacingOccurrences(of: #"\s{2,}"#, with: " ", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
         
+        // 1.9) Sugar cleanup: drop leading "packed" qualifiers for brown sugars
+        do {
+            name = name.replacingOccurrences(of: #"(?i)^\s*(?:firmly\s+)?packed\s+(dark\s+brown\s+sugar)\b"#, with: "$1", options: .regularExpression)
+            name = name.replacingOccurrences(of: #"(?i)^\s*(?:firmly\s+)?packed\s+(light\s+brown\s+sugar)\b"#, with: "$1", options: .regularExpression)
+        }
+
         // 2.1) Reformat ground spices so the spice name comes first, with state in parentheses: "Cumin (Ground)"
         do {
             // Normalize any existing lowercase/uppercase variants of "(ground)" to "(Ground)"
@@ -3428,9 +3738,13 @@ class LLMService: ObservableObject {
     private func validateAndAdjustCategory(_ name: String, originalCategory: GroceryCategory) -> GroceryCategory {
         let lowercasedName = name.lowercased()
         
-        // Check category overrides first (highest priority)
+        // Check category overrides first (highest priority) using flexible word-boundary matching
         for (keyword, category) in categoryOverrides {
-            if lowercasedName.contains(keyword) {
+            let base = NSRegularExpression.escapedPattern(for: keyword)
+            let flexible = base.replacingOccurrences(of: "\\s+", with: "[\\s-]+", options: .regularExpression)
+            let pattern = "(?i)(?:^|[^a-z])" + flexible + "(?:$|[^a-z])"
+            if let rx = try? NSRegularExpression(pattern: pattern),
+               rx.firstMatch(in: lowercasedName, options: [], range: NSRange(lowercasedName.startIndex..., in: lowercasedName)) != nil {
                 return category
             }
         }
@@ -5102,6 +5416,8 @@ class LLMService: ObservableObject {
 
         // Spices: common spice items
         ("garlic powder", .spices),
+        ("granulated garlic", .spices),
+        ("powdered garlic", .spices),
         ("cayenne pepper", .spices),
         ("cayenne", .spices),
         ("peppercorn", .spices),
@@ -5128,6 +5444,25 @@ class LLMService: ObservableObject {
         ("bicarbonate of soda", .pantry),
         ("sodium bicarbonate", .pantry),
         ("baking powder", .pantry),
+
+        // Produce: fresh chile varieties
+        ("thai chile", .produce),
+        ("thai chiles", .produce),
+        ("thai chili", .produce),
+        ("thai chilies", .produce),
+        ("thai bird chili", .produce),
+        ("thai bird chile", .produce),
+        ("bird's eye chili", .produce),
+        ("bird's eye chile", .produce),
+
+        // Pantry: preserved/jam/jelly variants
+        ("pineapple preserves", .pantry),
+        ("strawberry jam", .pantry),
+        ("strawberry jelly", .pantry),
+        ("lemon preserves", .pantry),
+
+        // Produce explicit
+        ("pineapple", .produce),
 
         // Pantry: gelatin / dessert mixes
         ("jell-o", .pantry),

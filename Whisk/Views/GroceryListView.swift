@@ -334,11 +334,34 @@ struct IngredientRow: View {
     // MARK: - Unit Formatting Methods
     
     private func formatAmountAndUnit(amount: Double, unit: String) -> String {
-        // Convert decimal to fraction for common fractions
+        // Descriptor-only units should not show a numeric amount
+        let unitLc = unit.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if unitLc == "for serving" { return "For serving" }
+        if unitLc == "to taste" { return "To taste" }
+
+        // Hide zero amounts entirely when there is no meaningful unit
+        if amount == 0 {
+            let su = spellOutUnit(unit)
+            return su.isEmpty ? "" : su
+        }
+
+        // Convert decimal to fraction for common fractions, with sensible rounding for near-integers
         let wholePart = Int(amount)
         let decimalPart = amount - Double(wholePart)
-        
-        var fractionString = ""
+
+        // If very close to an integer, display as an integer (handles 4.999986 → 5)
+        if abs(amount - round(amount)) < 0.01 {
+            let rounded = Int(round(amount))
+            let spelledOutUnit = spellOutUnit(unit)
+            if spelledOutUnit.isEmpty { return "\(rounded)" }
+            let finalUnit = formatUnitForAmount(unit: spelledOutUnit, amount: Double(rounded))
+            if let parenthetical = parentheticalUnitDisplay(from: finalUnit) {
+                return "\(rounded) \(parenthetical)"
+            }
+            return "\(rounded) \(finalUnit)"
+        }
+
+        var amountDisplay = ""
         if decimalPart > 0 {
             // Common fraction mappings
             let fractionMappings: [Double: String] = [
@@ -346,36 +369,60 @@ struct IngredientRow: View {
                 0.75: "¾", 0.125: "⅛", 0.375: "⅜",
                 0.625: "⅝", 0.875: "⅞"
             ]
-            
+
             // Find the closest fraction
             let closestFraction = fractionMappings.min { abs($0.key - decimalPart) < abs($1.key - decimalPart) }
             if let (fraction, symbol) = closestFraction, abs(fraction - decimalPart) < 0.1 {
-                fractionString = symbol
+                // Combine whole number and fraction glyph without a separator (e.g., 1½)
+                let wholeString = wholePart > 0 ? "\(wholePart)" : ""
+                amountDisplay = wholeString + symbol
             } else {
-                // If no close fraction, use decimal but round to 1 decimal place
-                fractionString = String(format: "%.1f", decimalPart).replacingOccurrences(of: "0.", with: "")
+                // Fallback: show one decimal place for the entire amount (e.g., 4.1)
+                amountDisplay = String(format: "%.1f", amount)
             }
+        } else {
+            amountDisplay = "\(wholePart)"
         }
-        
-        let amountString = wholePart > 0 ? "\(wholePart)" : ""
-        let combinedAmount = amountString + fractionString
-        
+
         // Ensure unit is properly spelled out
         let spelledOutUnit = spellOutUnit(unit)
-        
+
         // If no unit text (individual items), just return the amount
-        if spelledOutUnit.isEmpty {
-            return combinedAmount
-        }
-        
-        // Handle singular vs plural forms
+        if spelledOutUnit.isEmpty { return amountDisplay }
+
+        // Handle singular vs plural forms based on the numeric amount
         let finalUnit = formatUnitForAmount(unit: spelledOutUnit, amount: amount)
-        
-        // If amount is empty, return only unit (no leading space)
-        if combinedAmount.isEmpty {
-            return finalUnit
+
+        // Parenthetical style for measured size units preceding a noun
+        if !amountDisplay.isEmpty, let parenthetical = parentheticalUnitDisplay(from: finalUnit) {
+            return "\(amountDisplay) \(parenthetical)"
         }
-        return "\(combinedAmount) \(finalUnit)"
+
+        // If amount is empty, return only unit (no leading space)
+        if amountDisplay.isEmpty { return finalUnit }
+        return "\(amountDisplay) \(finalUnit)"
+    }
+    
+    // Extracts a size descriptor at the start of the unit and wraps it in parentheses, preserving any trailing unit noun
+    private func parentheticalUnitDisplay(from unit: String) -> String? {
+        // Match patterns like:
+        //  - 4-pound
+        //  - 13.5-ounce can
+        //  - 6-7-ounce fillets
+        //  - 1-inch piece
+        let pattern = "(?i)^\\s*([0-9]+(?:\\.[0-9]+)?(?:\\s*-\\s*(?:to\\s*)?[0-9]+(?:\\.[0-9]+)?)?\\s*(?:ounce|ounces|oz|pound|pounds|lb|lbs|inch|inches))\\b(?:\\s+(.*))?$"
+        guard let rx = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let r = NSRange(unit.startIndex..., in: unit)
+        guard let m = rx.firstMatch(in: unit, options: [], range: r) else { return nil }
+        guard m.numberOfRanges >= 2, let sr = Range(m.range(at: 1), in: unit) else { return nil }
+        let size = String(unit[sr]).replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        let noun: String = {
+            if m.numberOfRanges >= 3, let nr = Range(m.range(at: 2), in: unit), !nr.isEmpty {
+                return String(unit[nr]).trimmingCharacters(in: .whitespaces)
+            }
+            return ""
+        }()
+        return noun.isEmpty ? "(\(size))" : "(\(size)) \(noun)"
     }
     
     private func spellOutUnit(_ unit: String) -> String {
