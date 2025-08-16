@@ -1424,6 +1424,33 @@ class LLMService: ObservableObject {
                 seg.replacingOccurrences(of: "(?i)^(?:plus|and)\\s+", with: "", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
             }
         }
+
+        // Special case: split simple "X and Y, for serving" lists into two items, each keeping "for serving"
+        // to avoid combining distinct garnishes in one line.
+        do {
+            if normalized.range(of: #"(?i)\bfor\s+serving\b"#, options: .regularExpression) != nil,
+               normalized.range(of: #"(?i)\band\b"#, options: .regularExpression) != nil {
+                // Extract base list and note if there's a trailing ", for serving" or " for serving"
+                let base = normalized.replacingOccurrences(of: #"(?i)\s*,?\s*for\s+serving\s*$"#, with: "", options: .regularExpression)
+                // Split on 'and' between words
+                let candidates = base.components(separatedBy: .whitespaces)
+                if candidates.count > 2 { // avoid splitting single-word items
+                    let parts = base.replacingOccurrences(of: #"(?i)\s+and\s+"#, with: "|||", options: .regularExpression)
+                        .split(separator: "|")
+                        .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+                        .filter { !$0.isEmpty }
+                    if parts.count >= 2 {
+                        // Reattach ", for serving" to each part
+                        return parts.map { p in
+                            var seg = p
+                            // Remove leading list commas that might remain
+                            seg = seg.replacingOccurrences(of: #"^[,;:\s]+"#, with: "", options: .regularExpression)
+                            return seg + ", for serving"
+                        }
+                    }
+                }
+            }
+        }
         return [normalized]
     }
 
@@ -2974,6 +3001,26 @@ class LLMService: ObservableObject {
         let measuredSaltExists = ingredients.contains { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().contains("salt") && $0.amount > 0 }
         let measuredPepperExists = ingredients.contains { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().contains("pepper") && $0.amount > 0 }
 
+        // First pass: build a set of measured base names, expanding simple "X or Y" to both tokens
+        var measuredBaseNames: Set<String> = []
+        do {
+            for ing in ingredients {
+                let s = sanitizeIngredient(ing)
+                if s.amount > 0 {
+                    let base = s.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                    measuredBaseNames.insert(base)
+                    // Expand simple alternatives "x or y" into individual tokens for dedup purposes only
+                    let parts = base.replacingOccurrences(of: #"\s+or\s+"#, with: "|||", options: .regularExpression)
+                        .split(separator: "|")
+                        .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+                        .filter { !$0.isEmpty }
+                    if parts.count >= 2 {
+                        for p in parts { measuredBaseNames.insert(p) }
+                    }
+                }
+            }
+        }
+
         var result: [Ingredient] = []
         var seen: Set<String> = []
         for ing in ingredients {
@@ -3033,6 +3080,14 @@ class LLMService: ObservableObject {
                 let u = sanitized.unit.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
                 if u.isEmpty || u == "to taste" {
                     if measuredSaltExists { continue }
+                }
+            }
+            // Suppress zero-amount duplicates when a measured alternative exists (including when present in an "x or y" measured name)
+            if sanitized.amount == 0.0 {
+                let u = sanitized.unit.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                if u.isEmpty || u == "for serving" || u == "to taste" {
+                    let n = sanitized.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                    if measuredBaseNames.contains(n) { continue }
                 }
             }
             // Drop blanks that slipped through (e.g., empty name with only a unit/amount)
@@ -3954,7 +4009,18 @@ class LLMService: ObservableObject {
 
         // 1.2) Remove common preparation tokens anywhere (not just at start/end)
         cleanedName = cleanedName.replacingOccurrences(
-            of: #"(?i)\b(drained|rinsed|patted\s+dry)\b"#,
+            of: #"(?i)\b(drained|rinsed|patted\s+dry|peeled|deveined)\b"#,
+            with: "",
+            options: .regularExpression
+        )
+        // Also remove conjunction+prep combos like "and deveined" or "and peeled"
+        cleanedName = cleanedName.replacingOccurrences(
+            of: #"(?i)\b(?:and\s+)?deveined\b"#,
+            with: "",
+            options: .regularExpression
+        )
+        cleanedName = cleanedName.replacingOccurrences(
+            of: #"(?i)\b(?:and\s+)?peeled\b"#,
             with: "",
             options: .regularExpression
         )

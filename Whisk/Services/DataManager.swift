@@ -366,7 +366,8 @@ class DataManager: ObservableObject {
     // MARK: - Unit Kind Helpers
     private func isZeroLikeUnit(_ unit: String) -> Bool {
         let u = unit.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return u == "to taste" || u == "for serving"
+        // Treat empty unit as zero-like to allow consolidation with measured entries
+        return u.isEmpty || u == "to taste" || u == "for serving"
     }
 
     private func isVolumeUnit(_ unit: String) -> Bool {
