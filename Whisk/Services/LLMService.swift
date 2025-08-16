@@ -1415,8 +1415,13 @@ class LLMService: ObservableObject {
     private func determineCategory(_ name: String) -> GroceryCategory {
         let lowercasedName = name.lowercased()
 
-        // Prefer Produce for fresh roots/spices, peppers, onions, carrots, potatoes (handle plural forms)
-        if lowercasedName.range(of: #"(?i)\b(ginger|scotch\s+bonnet|habanero|jalapeño|jalapeno|bell\s+peppers?|peppers?|onions?|shallots?|scallions?|green\s+onions?|spring\s+onions?|carrots?|potatoes?|yukon\s+gold|russet)\b"#, options: .regularExpression) != nil {
+        // Spices-first for pepper variants to avoid Produce catch on generic "pepper"
+        if lowercasedName.range(of: #"(?i)\b(black\s+pepper|white\s+pepper|peppercorns?|red\s+pepper\s+flakes)\b"#, options: .regularExpression) != nil {
+            return .spices
+        }
+
+        // Prefer Produce for fresh roots/spices, peppers, onions, garlic, carrots, potatoes (handle plural forms)
+        if lowercasedName.range(of: #"(?i)\b(ginger|scotch\s+bonnet|habanero|jalapeño|jalapeno|bell\s+peppers?|peppers?|onions?|shallots?|scallions?|green\s+onions?|spring\s+onions?|garlic|garlic\s+cloves?|carrots?|potatoes?|yukon\s+gold|russet)\b"#, options: .regularExpression) != nil {
             return .produce
         }
 

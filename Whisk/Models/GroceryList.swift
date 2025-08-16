@@ -16,6 +16,11 @@ struct GroceryList: Identifiable, Codable, Hashable {
     
     var ingredientsByCategory: [GroceryCategory: [Ingredient]] {
         Dictionary(grouping: ingredients.filter { !$0.isRemoved }) { $0.category }
+            .mapValues { group in
+                group.sorted { lhs, rhs in
+                    lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+                }
+            }
     }
     
     var checkedIngredients: [Ingredient] {
